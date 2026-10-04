@@ -1,0 +1,8 @@
+# @xwtxxxx/probe-kit bundle patch（挂载补丁）
+# 形态依据：dsh 生态里已发布插件的原件（均为「单条 insert 行」）。
+# 语义（照原件注释）：作为 dsh.profile.bundles 层在 profile 上做一次 insert；
+#   后到的 bundle 层与用户自己的 cordis.patch.yml 按行 id 覆盖。
+# ⚠️ 本行只保证"能挂载"；宿主侧钩子尚未实现（见 lib/index.js 的诚实声明）。
+- insert:
+    - id: probe-kit
+      name: "@xwtxxxx/probe-kit"

@@ -1,0 +1,35 @@
+id: p10-declared-delivery-path-unused
+title: 自洽检查器打印了包内声明的投递路径，却从不拿它核对（声明与实际不符也判 OK）
+catches: [假绿, 口径]
+severity: medium
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/box <tmp>/务        # box＝实际位置；务＝包内声明的旧位置（空）
+  printf '# 交付说明\n' > <tmp>/box/交付说明.md
+  printf '# 任务包\n第七节 投递位置: <tmp>/务\n' > <tmp>/box/任务包.md
+  node <subject> <tmp>/box/任务包.md   # <subject>：任务包自洽检查装置
+  ls -A <tmp>/务 | wc -l    # 自证①：声明的投递位置是空的（应＝0）
+  ls <tmp>/box              # 自证②：交付物实际躺在包所在目录 ⇒ 声明与实际不一致成立
+run: |
+  本库装置：node <tmp>/toys/p10-declared-path-ignored.mjs（无参数；装置自建 .tmp-p10 夹具）
+  通用：把"包内声明的投递位置 ≠ 实际位置"的任务包喂给自洽检查装置；示例：node <你的装置> <tmp>/box/任务包.md
+expect: |
+  报警 = 装置解析包内声明的投递路径，与包实际所在目录比对：不一致 ⇒ 报"声明位置无交付物/包自相矛盾"
+         并计非 0。
+  漏   = 只核对"交付物与包同目录"，声明的路径打印了却不用 ⇒ 声明目录明明是空的，
+         仍打印 OK、退出码 0（历史实测：包写 A 东西在 B，执行者靠查工作区现场自救才没误投）。
+evidence: "1 号任务包第七节写 <投递箱>，实际投递箱早已是 任务箱 ⇒ 包自相矛盾；执行者交付原文：『任务包第七节路径「<投递箱>」疑为笔误，按工作区惯例写「任务箱」』"
+source: P10
+applies_to: [任务包/交付自洽检查装置, 核对"声明路径 vs 实际位置"的工具]
+limits: 包内不含路径声明字段时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p10-declared-path-ignored.mjs
+    cmd: node p10-declared-path-ignored.mjs
+    observed: "任务包内声明的投递位置: …\\.tmp-p10\\务／任务包实际所在目录: …\\.tmp-p10\\任务／声明目录里有交付物吗:   false／OK 任务包自洽／exit=0 —— 声明目录是空的仍判自洽"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/两件套质检器/twopiece-lint.mjs
+    cmd: node twopiece-lint.mjs --handover <tmp>/tp-p10/交接书.md --guide <tmp>/tp-p10/指南.md --repo <tmp>/tp-p10/repo-base    # 项目清单声明 ghost-dir/交付.md
+    observed: "<tmp>/tp-p10/交接书.md:5  项目清单路径不存在：`ghost-dir/交付.md`（按基准 …\\repo-base 解析为 …\\repo-base\\ghost-dir\\交付.md）／共 1 处违规／exit=1 —— 声明的路径被真核对"
+    verdict: 报警

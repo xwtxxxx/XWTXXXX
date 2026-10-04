@@ -1,0 +1,43 @@
+id: p21-review-misses-the-caller
+title: 审查范围只有工具本体一个文件，看不到调用链 ⇒ 把"重复判据"判成"结构性恒绿"
+catches: [假红, 口径]
+severity: medium
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>
+  # 给审查装置的输入①：工具本体的行号视图（不含调用方）
+  cat > <tmp>/tool-body.txt <<'EOF'
+  :12  const stage = checkStage();   // STAGE_GUARD
+  :34  git("add", "--", "./proj");   // GIT_ADD
+  EOF
+  # 输入②：调用方文件（真相同步造进 <tmp>，供装置读取——不再只写在注释里）
+  cat > <tmp>/caller.ps1 <<'EOF'
+  :34  git add -- $Files              # GIT_ADD
+  :39  if (Test-StageGuard) { throw } # STAGE_GUARD（调用方自己的独立门禁）
+  EOF
+  grep -n 'GIT_ADD\|STAGE_GUARD' <tmp>/caller.ps1    # 自证：调用方原文里门禁在 :39、add 在 :34 ⇒ "恒绿"结论的前提不成立
+  node <subject> <tmp>/tool-body.txt    # <subject>：审查装置（只拿到工具本体一个文件）
+
+run: |
+  本库装置：node <tmp>/toys/p21-single-file-review.mjs（缺省只看内置的工具本体视图；--context 附打印内置调用方事实）
+  通用：先只给审查装置工具本体，再给调用方文件比对结论；示例：node <你的审查装置> <tmp>/tool-body.txt --caller <tmp>/caller.ps1
+expect: |
+  报警 = 装置在拿不到调用方时明说"此结论取决于调用链、需集成层复核"，或主动索取调用方文件；
+         拿到调用方后修正结论（门禁在 add 之后 ⇒ 防护有效，那条判据只是重复）。
+  漏   = 仅凭单文件视图就下结构性断言"恒绿、拦不住任何东西"（假红）——结论与集成事实相反
+         （历史实测：7 条审查结论 6 成立 1 证伪，证伪的正是这条；误判降为偏好且不改代码）。
+evidence: "外部 agent报 D3（中）『stage-guard 跑在 git add 之前 ⇒ 结构性恒绿』；读调用方 commit-if-green.ps1：git add 在 :34，独立 stage-guard 门禁在 :39（add 之后）⇒ 越界防护真实有效，7 条里 1 条被证伪"
+source: P21
+applies_to: [代码审查/审计装置, 只拿到局部文件的静态分析器]
+limits: 审查范围天然含调用链（含调用方文件）时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p21-single-file-review.mjs
+    cmd: node p21-single-file-review.mjs --context
+    observed: "审查范围：仅 1 个文件（工具本体）；调用方未纳入／:12 const stage = checkStage()…／:34 git(\"add\", \"--\", \"./proj\")…／结论：FAIL 结构性问题 —— stage-guard 跑在 git add 之前 ⇒ 暂存区必然为空 ⇒ 该判据结构性恒绿，拦不住任何东西／[调用方事实] :34 git add → :39 独立 stage-guard 门禁（在 add 之后执行）⇒ 防护真实有效，上面那条结论是误判／exit=0 —— 断言错方向还照常退出 0"
+    verdict: 漏
+  - target: 本体工具
+    ref: 无对应本体
+    cmd: （无对应本体可跑）
+    observed: "8 件工具里没有『代码审查/审计』类本体——审查由审查员（人或代理）执行，工具只提供判据；无对应本体"
+    verdict: 不适用

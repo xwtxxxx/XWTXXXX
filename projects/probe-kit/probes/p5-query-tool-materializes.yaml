@@ -1,0 +1,40 @@
+id: p5-query-tool-materializes
+title: 自称"纯查询"的装置实际把运行时物化落盘，残留未跟踪文件却报"无副作用"
+catches: [假绿, 静默跳过]
+severity: medium
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/out
+  printf '# 交付\n' > <tmp>/out/README.md
+  cat > <tmp>/out/test.mjs <<'EOF'
+  import { mkdirSync, writeFileSync } from "node:fs";
+  mkdirSync(".tmp-leftover", { recursive: true });
+  writeFileSync(".tmp-leftover/junk.txt", "跑完不自清");
+  console.log("自检结果: 1 通过, 0 失败");
+  EOF
+  node <subject> --dir <tmp>/out   # <subject>：要跑被检件、又自称"只读/纯查询"的装置
+  # 跑完后核对：<subject> 声明的工作范围内是否多出未跟踪文件/目录
+  cd <tmp>/out && node test.mjs && ls -d .tmp-leftover    # 自证：在 out/ 里先跑一次被检件 —— 残留真的会出现（目录在列）
+run: |
+  本库装置：node <tmp>/toys/p5-materializing-query.mjs（无参数；物化落在脚本旁 .p5-runtime/）
+  通用：跑一遍自称"纯查询"的装置，再核对其工作范围；示例：node <你的装置> --dir <tmp>/out，然后 git -C <tmp> status --short
+expect: |
+  报警 = 装置把"跑完后多出的未跟踪物"如实报出（如 残留 1 处）并计入非 0；或它自己物化的东西
+         有忽略规则覆盖且明确披露副作用。
+  漏   = 装置自称"side_effects: none（纯查询）"而盘上多出物化目录（历史实测 7736 文件/272.1 MB
+         且 .gitignore 无对应规则），退出码 0。
+evidence: "调用取路径工具后 git status 多出 ?? <宿主目录>/<运行时>/ ——7736 个文件／272.1 MB，创建时间正是调用那一刻；.gitignore 有 sessions/、cache/、logs/、storages/ 唯独没有 dsh-runtimes/（Select-String 'runtimes' 无匹配）"
+source: P5
+applies_to: [自称只读/纯查询但要跑子进程的装置, 会物化运行时或缓存的工具]
+limits: 装置物化物有 .gitignore 覆盖且如实披露时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p5-materializing-query.mjs
+    cmd: node p5-materializing-query.mjs && ls -d .p5-runtime
+    observed: "tool: workspace_dependencies → 返回路径／side_effects: none（纯查询，不写盘）／未跟踪文件: 无 | verdict: OK／exit=0；跑后 toys/ 下实测多出 .p5-runtime/ 物化目录"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/验收台/accept-kit.mjs
+    cmd: node accept-kit.mjs --dir <tmp>/out     # 被检件的自测跑完不自清
+    observed: "accept-kit: [残留] .tmp-leftover（目录）／残留 1 ｜ … ｜ 自测 OK（退出码 0）…／exit=1 —— 先跑自测后扫描，跑完多出的未跟踪目录被如实报出并计入非 0"
+    verdict: 报警

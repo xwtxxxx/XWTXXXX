@@ -1,0 +1,35 @@
+id: p14-archive-overwrite-no-check
+title: 往已有同名目标的目录归档/输出时不检查存在性，静默覆盖上一单的文件
+catches: [假绿, 静默跳过]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/out
+  printf '# 交付\n' > <tmp>/out/README.md
+  printf 'console.log("自检结果: 1 通过, 0 失败");\n' > <tmp>/out/test.mjs
+  printf '旧报告正文——上一单的内容，不能丢。\n' > <tmp>/既有报告.md
+  ls -l <tmp>/既有报告.md        # 写入前（上一单实测 81 B）
+  node <subject> --dir <tmp>/out --out <tmp>/既有报告.md    # <subject>：把输出写到既有文件路径上
+  ls -l <tmp>/既有报告.md        # 写入后：内容还是旧的吗？
+run: |
+  本库装置：node <tmp>/toys/p14-archive-force-overwrite.mjs [盒目录]（缺省 .tmp-p14；装置自建平铺 done-flat 演示覆盖）
+  通用：让"写输出文件"的装置写到已存在文件的路径上；示例：node <你的装置> --dir <tmp>/out --out <tmp>/既有报告.md
+expect: |
+  报警 = 目标已存在 ⇒ 装置拒绝/改名/明确提示（打印"目标已存在"并计非 0），旧内容保得住。
+  漏   = 无任何提示静默覆盖：旧文件字节被整体换掉、工具照常退出 0（历史实测 Move-Item -Force
+         把done目录里上一单同名件覆盖，全程无报错；幸有归档副本才零损失）。
+evidence: "done\\ 平铺目录里 前一单的 README.md/test.mjs 被 后一单同名件覆盖（6063/17807 B 变后一单版）；前一单原件仍在<repo>/tools/md表格转CSV/（2556/5872 B）——实际损失 0 是侥幸不是设计"
+source: P14
+applies_to: [任何向磁盘写文件的装置, 归档/移动/输出类工具]
+limits: 输出路径恒为新建、或调用方保证目标为空时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p14-archive-force-overwrite.mjs
+    cmd: node p14-archive-force-overwrite.mjs
+    observed: "归档前 done-flat/README.md = 70 B ｜ 首行「前一版 README —— 上一单的正文，说明文字很长……」／归档后 done-flat/README.md = 10 B ｜ 首行「后一版」／归档完成：1 个文件，0 个冲突，退出码 0／exit=0 —— 上一单内容被静默顶替且报『0 个冲突』"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/验收台/accept-kit.mjs
+    cmd: node accept-kit.mjs --dir <tmp>/out --out <tmp>/既有报告.md    # --out 指向已存在的 81 B 旧报告
+    observed: "写入前 81 B 首行「旧报告正文——上一单的内容…」→ 写入后 1312 B 首行「# 验收报告草稿 —— out」；输出中『已存在/覆盖』命中 0 处；exit=0 —— 无提示静默覆盖"
+    verdict: 漏

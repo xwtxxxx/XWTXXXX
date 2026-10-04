@@ -1,0 +1,35 @@
+id: p26-blind-without-red-control
+title: 抽查"某输入被忽略"不带应当报红的对照 ⇒ "真失明"与"正常识别"在输出上不可区分
+catches: [假绿, 口径]
+severity: medium
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>
+  printf '# 学习指南\n\n### P1 甲\n### P2 乙\n#### P99 丙（4 级，编号非法）\n' > <tmp>/指南-4级.md
+  printf '# 学习指南\n\n### P1 甲\n### P2 乙\n### P99 丙（3 级，对照）\n' > <tmp>/指南-3级.md
+  node <subject> <tmp>/指南-4级.md    # <subject>：扫 P 编号跳号的装置
+  node <subject> <tmp>/指南-3级.md    # 对照：同构输入换成"该被认出的形态" ⇒ 必须变红
+  grep -n 'P99' <tmp>/指南-4级.md <tmp>/指南-3级.md    # 自证：两份夹具只差标题级别（#### ⟷ ###），其余同构
+run: |
+  本库装置：node <tmp>/toys/p26-blind-heading-scan.mjs（缺省单夹具；--control 叠加 3 级对照）
+  通用：把 4 级夹具与 3 级对照先后喂给扫跳号的装置；示例：node <你的装置> <tmp>/指南-4级.md，再喂 <tmp>/指南-3级.md
+expect: |
+  报警 = 4 级夹具与 3 级对照**一红一绿分明**：对照变红证明判据活着，4 级不红才坐实"对 4 级失明"
+         （结论可判定）；若 4 级也红，则装置无此盲区。
+  漏   = 只喂 4 级夹具得到 OK exit 0 就下结论 ⇒ 与"正常识别"不可区分（历史实测两连错：
+         先拿含真 P24 的夹具测出 P×25/exit 0，误判"正常识别"；对照实验后才定论 4 级真失明）。
+evidence: "对照实验：#### P99 → OK：未发现违规（M 类命中 ×8，P 类命中 ×25，…）／exit 0（真失明）⟷ ### P99 → P 编号跳号：P25 之后是 P99／exit 1 ✅；同一抽查动作连错三次（匹配模式不精确＋PS 重定向语义），最终靠源码证据＋对 37 条逐项判定"
+source: P26
+applies_to: [验收"忽略/失明"类结论的动作, 任何抽查类检查]
+limits: 输入形态只有一种、无同构对照可言时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p26-blind-heading-scan.mjs
+    cmd: node p26-blind-heading-scan.mjs            # 默认单夹具；--control 为对照
+    observed: "夹具 #### P99（4 级） => OK：未发现违规（识别到 P×2：24,25）／exit=0 —— 单夹具下'失明'与'正常'不可区分（--control 对照：### P99 → P 编号跳号：25 之后是 99 exit=1，坐实 4 级失明）"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/两件套质检器/twopiece-lint.mjs
+    cmd: node twopiece-lint.mjs --handover <tmp>/tp-p26/交接书.md --guide <tmp>/tp-p26/指南-4级.md --repo <tmp>/tp-p26    # 对照：--guide 换 指南-3级.md
+    observed: "4 级：OK：未发现违规（M×0，P×2，P 引用×0，项目路径×0）／exit=0 —— #### P99 被无视（P 编号只认 2–3 级标题，真失明）；3 级对照：P 编号跳号：P2 之后是 P99／共 1 处违规／exit=1 —— 对照变红，证明工具对 4 级标题的失明是真的"
+    verdict: 漏

@@ -1,0 +1,6 @@
+# 依赖
+node_modules/
+
+# 临时文件
+.tmp*
+*.log

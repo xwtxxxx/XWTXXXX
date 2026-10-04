@@ -1,0 +1,37 @@
+id: p16-fence-poisons-state-machine
+title: 代码围栏里的示例标题被当成真的，状态机泄漏 ⇒ 其后整篇判据静默失效
+catches: [静默跳过, 假绿]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/root
+  cat > <tmp>/root/文档.md <<'EOF'
+  ```md
+  ### P1 围栏示例（<投递箱> 在围栏内，本就不该判）
+  ```
+  围栏外的真实漂移：<投递箱>
+  EOF
+  node <subject> --root <tmp>/root   # <subject>：对 .md 逐行执行判据、带"历史段"状态机的装置
+  cat -n <tmp>/root/文档.md    # 自证：第 1–3 行是代码围栏（含 ### P1 示例）、第 4 行是围栏外真实漂移 —— 行号与 expect 对得上
+run: |
+  本库装置：node <tmp>/toys/p16-fence-poisons-state.mjs（缺省＝不识别围栏；--fixed＝识别围栏的正确对照）
+  通用：把围栏＋围栏外漂移的文档喂给"逐行状态机型"检查器；示例：node <你的装置> --root <tmp>/root
+expect: |
+  报警 = 围栏内的行不参与任何判据、也不推进状态机 ⇒ 围栏**后**的真实漂移被报出（退出码非 0）。
+  漏   = 围栏里的 ### P1 被当成真标题 ⇒ 历史段状态泄漏 ⇒ 围栏后的真实漂移被整段跳过，
+         打印 OK、退出码 0（历史实测：同一行旧箱名，含围栏 OK exit 0，去围栏即漂移 2 处 exit 1）。
+evidence: "独立审查 4 条缺陷之一（4/4 复现成立）：对照实验 D1（含围栏）OK exit 0 vs D1c（无围栏）漂移 2 处 exit 1；修后围栏内不参与判据、不推进状态机、不参与全局最大号统计"
+source: P16
+applies_to: [逐行扫描 .md 的状态机型判据, 会遇到代码围栏/示例块的文档检查器]
+limits: 输入文档保证无围栏时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p16-fence-poisons-state.mjs
+    cmd: node p16-fence-poisons-state.mjs          # 同族形态：不识别围栏 ⇒ 围栏内 ### P1 泄漏状态机 ⇒ 围栏外真实漂移 0 命中
+    observed: "命中漂移 0 处 ⇒ OK (exit 0)／exit=0 —— 文档第 5 行躺着围栏外的真实漂移（旧箱名 <投递箱>），判据 0 命中仍宣布 OK；--fixed 对照（识别围栏）→ [R1] 第 5 行：旧箱名 `<投递箱>`（应为 `任务箱`）／命中漂移 1 处 ⇒ 报警 (exit 1)／exit=1"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/doc-drift-check/doc-drift-check.mjs
+    cmd: node doc-drift-check.mjs --root <tmp>/ddc-p16/root
+    observed: "漂移: 1 处（扫描 1 个文件；…）／- [R1] 文档.md:4  旧投递箱名 `<投递箱>`（应为 `任务箱`）／exit=1 —— 围栏（第 1–3 行）没有把状态机带偏，围栏后第 4 行的真实漂移照报"
+    verdict: 报警

@@ -1,0 +1,38 @@
+id: p18-gate-hangs-one-check-only
+title: 提交门槛只挂第一个判据的退出码，其余判据报红照样提交
+catches: [假绿, 静默跳过]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/ca-p18
+  cat > <tmp>/ca-p18/cfg.json <<'EOF'
+  [{"name":"绿-判据","cwd":"<tmp>/ca-p18","args":["-e","process.exit(0)"]},{"name":"红-判据","cwd":"<tmp>/ca-p18","args":["-e","process.exit(1)"]}]
+  EOF
+  # 自证：两条判据各自独立跑一遍，退出码一绿一红（"一绿一红"从断言变成实测）
+  node -e "process.exit(0)"; echo "绿-判据 exit=$?"
+  node -e "process.exit(1)"; echo "红-判据 exit=$?    ← 必须是 1"
+  node <subject> --config <tmp>/ca-p18/cfg.json    # <subject>：吃这份清单的提交门槛装置
+
+run: |
+  本库装置：node <tmp>/toys/p18-gate-only-first-check.mjs（无参数；装置内嵌一绿一红两条判据）
+  通用：把多判据清单喂给提交门槛装置；示例：node <你的门槛装置> --config <tmp>/ca-p18/cfg.json
+expect: |
+  报警 = 门槛聚合**全部**判据：任一非 0 ⇒ 拒绝提交/退出码非 0，且点名是哪条红了。
+  漏   = 门槛只取判据1 的退出码（=0）⇒ git add ＋ commit 照走、整体退出码 0——
+         判据"跑了但没进门"等于没跑（历史实测：漂移 2 处 exit 1 却已 commit 1623cc7；
+         同日复发第二次 1ea3b0e，之后才工具化成 commit-if-green）。
+evidence: "doc-drift-check → 漂移 2 处 … P1–P16 与实际最大号 P17 不符（exit 1）却已 commit 1623cc7；补记：修完又在 check-all 未全绿时提交 1ea3b0e——同一个错两次；处置：commit-if-green.ps1（check-all 不全绿 ⇒ 根本不进 git add）"
+source: P18
+applies_to: [提交/发布门槛装置, '"跑多个判据再放行"的编排器']
+limits: 只有一个判据时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p18-gate-only-first-check.mjs
+    cmd: node p18-gate-only-first-check.mjs
+    observed: "stage-guard  exit=0  |  14/14 通过／doc-drift-check  exit=1  |  漂移 2 处：编号声明 P1–P16 与实际最大号 P17 不符／门槛只取 stage-guard 的退出码（=0）⇒ git add . && git commit -m \"...\" ⇒ 提交成功／exit=0 —— 判据2 报红照样提交"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/check-all/check-all.mjs
+    cmd: node check-all.mjs --config <tmp>/ca-p18/cfg.json    # 两判据：一绿一红
+    observed: "PASS  绿-判据  (exit=0)／FAIL  红-判据  (exit=1)／有红：1/2 条 —— 红-判据／- 红-判据 (exit=1)／exit=1 —— 每条判据都进门槛，红的点名报出"
+    verdict: 报警

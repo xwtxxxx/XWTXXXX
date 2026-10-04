@@ -1,0 +1,36 @@
+id: p4-documented-tool-path-fallback
+title: 装置对"工具在哪"只给文档一个答案，路径失效时静默换成另一套照跑
+catches: [身份, 静默跳过]
+severity: medium
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>
+  printf '本线工具位于 <tmp>/vendor/bin/tool\n' > <tmp>/doc.md   # 文档写的位置（故意不给真件）
+  node <subject> <tmp>/doc.md    # <subject>：按文档回答"工具在哪"并就地启动它的装置
+  # 判定材料：documented 路径必须不存在；现场另有另一套可用运行时
+  test ! -e <tmp>/vendor/bin/tool && echo '自证①：文档写的工具路径确实不存在（未建过）'
+  node --version    # 自证②：现场另有一套可用运行时（⇒ 与文档所写不一致）
+  cat <tmp>/doc.md  # 自证③（关系型）：读回文档原句，与上一行现场真值比对
+run: |
+  本库装置：node <tmp>/toys/p4-two-runtimes.mjs（无参数；"文档写的工具路径"由装置按自身位置推导）
+  通用：把"按文档回答工具在哪并就地启动"的装置指向这份文档；示例：node <你的装置> <tmp>/doc.md
+expect: |
+  报警 = 装置核对 documented 路径存在性（existsSync/Test-Path），不存在 ⇒ 显式报错、非 0 退出，
+         绝不"回答一套、跑另一套"。
+  漏   = 装置报告口径仍是"使用文档那套"，实际却静默启动了现场另一套（历史实测：回答文档路径、
+         实跑另一运行时、打印"使用文档那套"、退出码 0）。
+evidence: "『Python 在哪』有两个答案：load_workspace_dependencies 返回 DSH 自带运行时那套 python（还带 numpy/pandas/python-docx/openpyxl），而交接书原记用户手装那套（uv 0.12.13，Python 3.12.10）——同机两套并存，答案取决于问谁"
+source: P4
+applies_to: [按文档路径定位工具再启动的编排装置, 报告"用的是哪套工具"的装置]
+limits: 只有一套运行时且路径恒真时不受影响
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p4-two-runtimes.mjs
+    cmd: node p4-two-runtimes.mjs
+    observed: "装置回答「工具在哪」: …\\toys\\vendor\\python\\python.exe／文档路径存在: false／实际跑起来的那套: v24.19.0／报告口径: 使用文档那套 | verdict: OK／exit=0"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/prog工作台/prog.mjs
+    cmd: node prog.mjs --tools <tmp>/no-such-tools check    # --tools 指到不存在的位置（相当于"文档说的位置是错的"）
+    observed: "prog: 工具脚本不存在：…\\no-such-tools\\check-all\\check-all.mjs／exit=2 —— 显式传入的位置无效就拒绝执行，绝不静默回退到默认路径"
+    verdict: 报警

@@ -1,0 +1,35 @@
+id: p20-manifest-missing-field-pass
+title: 清单项缺必需字段被记成 PASS——结构不合法被当成"没有意见"
+catches: [假绿, 静默跳过]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>
+  printf '[{"name":"x"}]' > <tmp>/cfg.json     # 清单项只有 name，缺 cwd/args
+  node <subject> --config <tmp>/cfg.json       # <subject>：读清单逐条执行的门槛/编排装置
+  cat <tmp>/cfg.json; echo    # 自证①：清单项只有 "name"，cwd／args 缺失
+  node < /dev/null; echo "自证②：裸 node 读空 stdin exit=$?（＝0，漏的机制真的在场）"
+run: |
+  本库装置：node <tmp>/toys/p20-manifest-fail-open.mjs（无参数即用默认缺字段清单；注意 --config 吃**内联 JSON**，不吃文件路径）
+  通用：把缺必需字段的清单按装置自己的接口喂进去；示例：node <你的装置> --config <tmp>/cfg.json（吃文件）或 --config '[{"name":"x"}]'（吃内联）
+expect: |
+  报警 = 退出码非 0（用法/环境错误，如 exit=2），明确报"清单不合法：args 必须是非空数组"，
+         拒绝执行——绝不把缺字段项记成 PASS。
+  漏   = 缺 args ⇒ 裸 node 读空 stdin 立刻退出 0 ⇒ 打印 PASS x (exit=0) ＋ 全部 1 条判据绿 ＋
+         退出码 0，与"真通过"完全同形（历史实测如此，而其自测同时 8/8 全绿——8 个用例全走
+         --config 注入，没有一个打到真实默认输入）。
+evidence: "--config '[{\"name\":\"x\"}]' → PASS x (exit=0) / 全部 1 条判据绿 / exit 0；修后 → exit=2 ＋『清单第 1 项(x): args 必须是非空数组 …』；node check-all/test.mjs → 14 通过 0 失败；node check-all.mjs → 全部 10 条判据绿 exit 0"
+source: P20
+applies_to: [读清单/配置再逐条执行的编排器, 任何"缺字段就跳过"的输入处理]
+limits: 清单结构恒由程序生成且带 schema 校验时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p20-manifest-fail-open.mjs
+    cmd: node p20-manifest-fail-open.mjs
+    observed: "PASS  x  (exit=0)／全部 1 条判据绿／[自测] 8 通过, 0 失败   ← 8 个用例全走 --config 注入，没有一个打到默认清单／exit=0"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/check-all/check-all.mjs
+    cmd: node check-all.mjs --config <tmp>/cfg.json
+    observed: "环境错误: 判据清单不合法（拒绝执行，绝不当作通过）:／- 清单第 1 项: cwd 必须是非空字符串／- 清单第 1 项(x): args 必须是非空数组 —— 缺 args 会让裸 node 读空 stdin 退出 0 并被记成 PASS／exit=2"
+    verdict: 报警

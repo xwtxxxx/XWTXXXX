@@ -1,0 +1,40 @@
+id: p8-scalar-trap-silent-judge
+title: 单元素集合被当标量，$times[0] 取到首字符，判据恒假却打印正常、不报错
+catches: [假绿]
+severity: medium
+deps: [bash, node, powershell]
+inject: |
+  # 在 PowerShell 5.1 下复现"打印正常、比较恒假"的判据（PowerShell 管道标量陷阱）
+  powershell -NoProfile -NonInteractive -Command '
+  $ErrorActionPreference = "Stop"
+  $d = "<tmp>/p8-scratch"
+  Remove-Item -Recurse -Force $d -ErrorAction SilentlyContinue
+  1..3 | ForEach-Object { New-Item -ItemType Directory -Path (Join-Path $d "entry-$_") | Out-Null }
+  Get-ChildItem $d | ForEach-Object { $_.CreationTime = Get-Date "2026-10-01 10:39:13" }
+  $times = Get-ChildItem $d | ForEach-Object { $_.CreationTime.ToString("HH:mm:ss") } | Sort-Object -Unique
+  Write-Output ("元素个数: " + $times.Count)          # 1 ⇒ $times 是标量字符串
+  Write-Output ("取第 0 项得到的实际内容: " + $times[0])   # "1"（首字符），不是 "10:39:13"
+  Write-Output ("判据(所有条目同时创建): " + ($times[0] -eq "10:39:13"))   # 恒为 False
+  '
+run: |
+  本库装置：node <tmp>/toys/p8-scalar-trap.mjs（无参数；装置内部驱动 PowerShell 现场布置）
+  通用：把"对集合逐个比较/取第 n 项"的判据放到 PowerShell 5.1 下，输入恰好只有 1 个元素；示例：powershell -NoProfile -Command "<inject 里的片段>"
+expect: |
+  报警 = 装置的集合比较先 @() 强制数组（或用 -contains/-eq 整值比较）：元素个数、取值、判据三者一致。
+  漏   = 判据恒 False 却不报错：打印"收集到的时间戳: 10:39:13"看似正常，判据静默为假、
+         走"未删除/未通过"分支、退出码 0 —— 判据"看起来在跑"。
+evidence: "修正前 $times[0] -eq '10:39:13' → False（而 $times 打印就是 10:39:13），同一目录连续两次走『未删除』分支；加 @() 后 → True，目录删除成功"
+source: P8
+applies_to: [PowerShell 管道输出当集合用的判据, '"逐个比较/取第 n 项"的检查逻辑']
+limits: 非 PowerShell 装置不适用；集合恒 ≥2 元素时缺陷潜伏但仍在；仅 Windows PowerShell 5.1 系可复现（7 的管道返回行为不同）
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p8-scalar-trap.mjs
+    cmd: node p8-scalar-trap.mjs
+    observed: "收集到的时间戳: 10:39:13／元素个数: 1／取第 0 项得到的实际内容: '1'／判据(所有条目同时创建): False／判定: 不满足 -> 未删除；目录下仍有 3 项／装置退出码 0（未报警）／exit=0。注：原版玩具因 URL.pathname 百分号编码在本机（路径含空格）EPERM 崩溃，实测副本仅修路径推导（fileURLToPath），被测缺陷逻辑未动"
+    verdict: 漏
+  - target: 本体工具
+    ref: 无对应本体
+    cmd: （无对应本体可跑）
+    observed: "8 件工具里没有 PowerShell 集合判据类的本体；唯一相近的 commit-if-green.ps1 在本机一执行就 Test-Path 探测 <宿主目录>\\…（任务红线：不许访问该路径），无法真跑。静态可见其 $Paths = @($Allow) 有 @() 守卫，但无运行时证据，不下结论"
+    verdict: 不适用

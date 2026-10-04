@@ -1,0 +1,37 @@
+id: p22-tempfile-inside-add-face
+title: 提交消息/临时件放在 add 覆盖面之内 ⇒ "用完即删"的件被 git add 顺手抓进历史
+catches: [假绿, 越权]
+severity: medium
+deps: [bash, node, git]
+inject: |
+  mkdir -p <tmp>/root/proj
+  printf 'feat: 新功能\n' > <tmp>/root/proj/feature.txt
+  printf '示例提交消息\n' > <tmp>/root/proj/_commit-msg.txt    # ❌ 临时件在 add 面之内
+  git -C <tmp>/root init -q
+  git -C <tmp>/root -c core.quotepath=false status --short -uall    # 自证：两个文件都以 ?? 在列 —— 都在 add 面内、未被忽略
+  node <subject> <tmp>/root    # <subject>：执行/模拟 git add -- proj 的流程装置
+  rm <tmp>/root/proj/_commit-msg.txt    # 用完即删——但已进 add 面的字节，装置照抓
+
+run: |
+  本库装置：node <tmp>/toys/p22-tempfile-in-addface.mjs <tmp>/root（位置参数＝仓库根；装置模拟 git add -- proj 并列出将提交的文件）
+  通用：让"执行/模拟 add"的流程装置在临时件躺在 add 面内时走一遍 add；示例：node <你的装置> <tmp>/root，然后 git -C <tmp>/root log --name-only -1
+expect: |
+  报警 = 装置在 add 前把"add 面内的临时件"报出来（或 add 面外移/先删再 add）：
+         提交历史不含 _commit-msg.txt。
+  漏   = add 抓的是那一刻盘上的字节 ⇒ 临时件以 create mode 100644 进历史，事后删本地文件
+         也只留下"创建又删除"的痕迹（历史实测 efb558f 含 _commit-msg.txt，靠 reset --soft 纠正重走）。
+evidence: "efb558f 的 git show --stat 含 <repo>/tools/门槛工具独立审查/_commit-msg.txt；纠正后 027586a（6 个文件）＋ git status --short 无输出；规矩：提交消息文件 MUST 写在仓库外"
+source: P22
+applies_to: [执行/模拟 git add 的流程装置, 任何"宽面 add ＋ 就面临时件"的工作流]
+limits: add 面精确到文件、或临时件恒在仓库外时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p22-tempfile-in-addface.mjs
+    cmd: node p22-tempfile-in-addface.mjs <tmp>/root
+    observed: "$ git add -- proj／  A  proj/_commit-msg.txt／  A  proj/feature.txt／  ⇒ 临时件 _commit-msg.txt 已进入提交历史（create mode 100644）／清理本地临时件后 git status --short：无输出（工作树干净）—— 但历史里已留下「创建又删除」的临时件／exit=0"
+    verdict: 漏
+  - target: 本体工具
+    ref: 无对应本体
+    cmd: （无对应本体可跑）
+    observed: "最相关的 commit-if-green.ps1 无法在本机真跑：它执行即 Test-Path 探测 <宿主目录>\\…（红线：不许访问该路径）；静态读源码：其 -MessageFile 只做存在性检查、未校验是否落在 add 面内 ⇒ 无运行时证据，如实记『无对应本体可实测』"
+    verdict: 不适用

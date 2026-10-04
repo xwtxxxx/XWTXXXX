@@ -1,0 +1,35 @@
+id: p15-fixture-outside-scriptdir
+title: 自测夹具建在脚本目录之外，建不成还静默继续，环境错被记成用例失败
+catches: [假红, 静默跳过]
+severity: medium
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/toys
+  printf 'PRE-BLOCKER' > <tmp>/p15-blocker          # 用一个"文件"堵死夹具根（其下 mkdir 必失败）
+  node <subject> <tmp>/p15-blocker/root   # <subject>：自测夹具建在参数指定根下的装置
+  # 对照：夹具根可写时再跑一遍，观察两类输出的差异
+  mkdir <tmp>/p15-blocker/root 2>/dev/null; echo "自证①：被堵死的根 mkdir exit=$?（必须非 0）"
+  mkdir -p <tmp>/p15-ok/root; echo "自证②：可写对照 mkdir exit=$?（必须 0）"
+run: |
+  本库装置：node <tmp>/toys/p15-fixture-outside-scriptdir.mjs <tmp>/p15-blocker/root（位置参数＝夹具根；用被堵死的根复现）
+  通用：把不可写的夹具根传给"自建夹具再跑用例"的装置；示例：node <你的装置> <tmp>/p15-blocker/root
+expect: |
+  报警 = 夹具建不成 ⇒ 装置显式报"环境错误/夹具不可建"并计非 0，与"用例失败"清楚分开；
+         夹具可建时，夹具落在脚本目录内（非 %TEMP%/os.tmpdir()），跑完自清。
+  漏   = 夹具建不成不预检、静默继续 ⇒ 13 条用例全报失败（历史实测 pass=1 fail=13、
+         全是 EPERM mkdtemp）——环境问题伪装成"13 条用例失败"；或夹具悄悄建到脚本目录之外。
+evidence: "node 子进程在 cwd 外写文件一律 EPERM（%TEMP% ❌、<盘符>:\\<路径> ❌、cwd 内 ✅）；stage-guard/test.mjs 从 14/14 突变 pass=1 fail=13，代码一行没改；修法 join(dirname(fileURLToPath(import.meta.url)), '.tmp-…') 后 14/14 exit 0"
+source: P15
+applies_to: [自带自测的装置, 自建临时夹具的测试脚本]
+limits: 夹具恒在脚本目录内且环境恒可写时不适用；EPERM 边界源于沙箱拒绝子进程写 cwd 之外，无该沙箱的环境需改用只读位置构造夹具根
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p15-fixture-outside-scriptdir.mjs
+    cmd: node p15-fixture-outside-scriptdir.mjs <tmp>/p15-blocker/root
+    observed: "夹具根: …\\p15-blocker\\root／pass=1 fail=13／exit=1 —— 夹具根的 mkdir 失败被静默跳过，13 条环境错被记成用例失败（可写对照：pass=14 fail=0 exit=0，两态不可区分是哪层坏了）"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/验收台/test.mjs
+    cmd: node test.mjs    # 夹具按规矩建在本目录 .tmp-accept-kit-<pid>，跑完自清
+    observed: "自检结果: 17 通过, 0 失败／exit=0；工具目录内 .tmp-* 残留 0 个；TEMP 目录快照 before/after 各 14489 项、增量 0 行 —— 夹具不落 %TEMP%、不静默改写环境"
+    verdict: 报警

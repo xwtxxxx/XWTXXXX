@@ -1,0 +1,35 @@
+id: p1-assumed-runtime-version
+title: 装置按"文档里写的运行时版本"挑 API，从不探测现场，静默走降级路径
+catches: [身份, 假绿]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>
+  printf '本机运行时版本：v16.20.0\n' > <tmp>/doc.md      # 文档说的版本（故意与现场不同）
+  node --version                                          # 现场真值（实测机为 v24.19.0）
+  node <subject> <tmp>/doc.md    # <subject>：按文档写明的版本挑 API 的装置
+  # 判定材料：让 <subject> 深拷贝一个含 Set/Date/undefined 的对象，打印各字段类型
+  cat <tmp>/doc.md    # 自证（关系型）：读回文档写的版本（v16.20.0），与上面 node --version 的现场真值比对 ⇒ 两者不一致即坏情况成立
+run: |
+  本库装置：node <tmp>/toys/p1-assumed-version.mjs（无参数；被假设的文档版本内置于装置）
+  通用：把"按文档版本挑 API"的装置指向这份文档，让它深拷贝含 Set/Date 的对象；示例：node <你的装置> <tmp>/doc.md
+expect: |
+  报警 = 装置先取现场真实版本（node --version／$PSVersionTable 等），或明确报"现场版本与文档不符"；
+         含 Set/Date 的对象经它处理后字段类型不丢失。
+  漏   = 装置按文档版本静默选降级路径：Date 变 string、Set 变普通对象、undefined 字段被丢弃，
+         全程无告警、退出码 0。
+evidence: "实测本机 pwsh 工具底层为 Windows PowerShell 5.1.26100.9444（$PSVersionTable），按 PS 7 写的 utf8NoBOM／AsByteStream 直接报参数错误；改 .NET 写法后消息文件首 3 字节 = 100,111,99（无 BOM），git commit -F 成功（commit 28acc43）"
+source: P1
+applies_to: [按文档假设运行时版本的装置, 跨运行时选 API 的脚本]
+limits: 现场只有一套运行时、且装置不引用文档版本时不受影响
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p1-assumed-version.mjs
+    cmd: node p1-assumed-version.mjs
+    observed: "装置依据的版本: v16.20.0 （未检测现场）／出参: {\"when\":\"2026-10-01T00:00:00.000Z\",\"tags\":{},\"n\":1}／字段类型: when=string tags=object u键存在=false／verdict: OK／exit=0"
+    verdict: 漏
+  - target: 本体工具（check-all 家族的 PowerShell 提交门禁脚本）
+    ref: <repo>/tools/check-all/commit-if-green.ps1
+    cmd: powershell.exe -NoProfile -File <tmp>/parse-probe.ps1 -p <repo>\tools\check-all\commit-if-green.ps1    # 在现场运行时 5.1.26100.9444 下做 Parser::ParseFile
+    observed: "file=commit-if-green.ps1  parse_errors=0 —— 脚本 ASCII-only、中文路径由参数传入，在现场运行时可解析。注：刻意做坏的对照件（UTF-8 无 BOM 含中文的 .ps1）在本机 parse_errors=0、-File 执行 exit 0，P2 家族的『.ps1 按 GBK 解码崩溃』在本机未复现（与 P2 记载不同，如实记录）"
+    verdict: 报警

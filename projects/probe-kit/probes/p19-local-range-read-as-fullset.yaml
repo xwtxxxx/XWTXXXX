@@ -1,0 +1,38 @@
+id: p19-local-range-read-as-fullset
+title: 判据过宽：局部区间引用被当成"全集声明"，与全局最大号比对产生假红
+catches: [假红, 口径]
+severity: low
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/root
+  cat > <tmp>/root/文档.md <<'EOF'
+  - P1–P18 全部完成（全集声明，合法）。
+  - 当时抓到 P9–P12 的顺序问题（历史叙述，局部引用）。
+  ### P18 最新条目
+  正文。
+  EOF
+  node <subject> --root <tmp>/root    # <subject>：把"形如 X1–Xn 的区间"与全局最大号比对的装置
+  cat -n <tmp>/root/文档.md    # 自证：全集声明（P1–P18）与局部引用（P9–P12）各占一行、最大号标题 ### P18 在场
+run: |
+  本库装置：node <tmp>/toys/p19-range-too-loose.mjs [文件]（无参数即用内置 SAMPLE；位置参数可选传文档路径）
+  通用：把含局部区间引用的文档喂给"编号声明与全局最大号比对"装置；示例：node <你的装置> --root <tmp>/root
+expect: |
+  报警 = 装置按语义区分两种区间：全集声明（P1–Pn）末尾须等于全局最大号；局部区间按
+         "区间内每个编号都存在"判——P9–P12 保持绿、P9–P99 这类坏引用才红。
+  漏   = 任意区间都被当全集声明 ⇒ P9–P12 被报"与实际最大号 P18 不符"（假红噪音，真问题 0 条），
+         退出码 1；下一位会把噪音当真漂移去改文档（历史实测同类误报 4 次，靠行内豁免消音）。
+evidence: "check-all → FAIL doc-drift-check [R3] 交接文档第 205 行 编号声明 P9–P12 与实际最大号 P18 不符（该行是历史叙述）；同类复发：学习文档里『规则 1–7 条』的区间引用、交接书第 29 行 —— 累计 4 次，正确判据是『区间内每个编号都存在』"
+source: P19
+applies_to: [核对编号声明的判据装置, 用"区间末尾＝最大号"启发的扫描器]
+limits: 文档从不写局部区间时不适用（过宽是 fail-safe 方向：噪音，不放走真问题）
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p19-range-too-loose.mjs
+    cmd: node p19-range-too-loose.mjs
+    observed: "FAIL  doc-drift-check  [R3]  编号声明 P9–P12 与实际最大号 P18 不符／全部 1 条判据红（其中噪音 1 条，真问题 0 条）exit=1／exit=1 —— 假红噪音"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/doc-drift-check/doc-drift-check.mjs
+    cmd: node doc-drift-check.mjs --root <tmp>/ddc-p19/root
+    observed: "漂移: 1 处（扫描 1 个文件；查 0 条路径、2 处编号声明、疑似未识别 0 处）／- [R3] 文档.md:2  编号声明 P9–P12 与实际最大号 P18 不符／exit=1 —— 局部区间引用仍被误判（工具至今带这条过宽判据，真数据靠 <!-- drift-ignore --> 消音）"
+    verdict: 漏

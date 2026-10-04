@@ -1,0 +1,36 @@
+id: p6-git-quotepath-assumed
+title: 调 git 不显式声明 quotepath，换个仓库就拿到八进制转义路径还当真
+catches: [环境耦合, 假绿]
+severity: high
+deps: [bash, node, git]
+inject: |
+  mkdir -p <tmp>/repo && cd <tmp>/repo && git init -q .
+  mkdir -p 项目源码 越界目录
+  printf '内容\n' > 项目源码/中文文件.md
+  printf '越界\n' > 越界目录/越界文件.md
+  git add -A                                    # 仓库未配 core.quotepath ⇒ git 默认八进制转义
+  git -c core.quotepath=true diff --cached --name-only   # 对照：确认转义形态存在（"\347\274\226…"）
+  node <subject> --repo <tmp>/repo --allow 项目源码       # <subject>：检查暂存区越界的装置
+run: |
+  本库装置：node <tmp>/toys/p6-quotepath-assume.mjs <tmp>/repo（位置参数＝仓库路径）
+  通用：让"调 git 列文件再按路径核对"的装置吃这个未配 quotepath 的仓库；示例：node <你的装置> --repo <tmp>/repo
+expect: |
+  报警 = 装置显式声明编码（-c core.quotepath=false ＋ -z 或等价物）：范围内中文文件不误报（红），
+         范围外中文文件以**真实名字**（非 \347 八进制）报越界并计非 0。
+  漏   = 装置拿到八进制转义串直接当路径比较：范围内中文文件被误判越界（假红），或范围外中文
+         文件因比较失败被静默放行（假绿），且退出码与"真的合规"不可区分。
+evidence: "该仓库 core.quotepath=false 是仓库级配置（global/system 均空）；强制 -c core.quotepath=true 立刻现形 \"\\347\\274\\226\\347\\250\\213/…\"；stage-guard 按显式写法实现后自测含『中文路径不转义』专项"
+source: P6
+applies_to: [调用 git 列文件/查状态的装置, 做路径前缀/白名单比较的判据工具]
+limits: 不调 git 的装置不适用；仓库恒配 quotepath=false 时缺陷潜伏但仍在
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p6-quotepath-assume.mjs
+    cmd: node p6-quotepath-assume.mjs <tmp>/repo        # repo 未配 quotepath，含中文文件
+    observed: "git ls-files 报告 2 个路径；按这些路径在磁盘上找到 0 个／其中 2 个\"找不到\"，例：\"\\346\\231\\256\\351\\200\\232\\346\\226\\207\\344\\273\\266.txt\"／结果：部分路径不可用（未报错，退出码仍为 0）／exit=0"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/stage-guard/stage-guard.mjs
+    cmd: node stage-guard.mjs --repo <tmp>/repo --allow 项目源码    # 同一仓库：范围内中文件＋范围外中文件都已暂存
+    observed: "越界: 1 个文件不在允许范围内（允许: 项目源码）／- 越界目录/越界文件.md ／exit=1 —— 范围外中文文件以真名报出；对照（暂存区只有范围内中文文件时）→ OK 暂存区 1 个文件全部在允许范围内 ／ exit=0，范围内部件未被八进制串误杀"
+    verdict: 报警

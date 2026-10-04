@@ -1,0 +1,51 @@
+{
+  "name": "@xwtxxxx/probe-kit",
+  "version": "0.1.0",
+  "description": "DSH 探针工具包：卡面合法性、卡契约校验、审计档生成 —— 四个零依赖 CLI ＋ 一个最小宿主插件壳。",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xwtxxxx/XWTXXXX.git",
+    "directory": "projects/probe-kit"
+  },
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "card-yaml-lint": "./bin/card-yaml-lint.mjs",
+    "card-contract-lint": "./bin/card-contract-lint.mjs",
+    "audit-kit": "./bin/audit-kit.mjs",
+    "probe-runner": "./bin/probe-runner.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "probes",
+    "toys",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "compatibility": {
+      "dsh": ">=0.2.0-rc.2"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "probe",
+    "audit",
+    "verification"
+  ]
+}

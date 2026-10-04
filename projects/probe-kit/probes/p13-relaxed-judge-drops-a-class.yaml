@@ -1,0 +1,45 @@
+id: p13-relaxed-judge-drops-a-class
+title: 为消假阳性把整类输入跳过——修假阳性时顺手把判据改松，该报的跟着消失
+catches: [假绿, 静默跳过]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/box <tmp>/repo-base
+  printf 'x\n' > <tmp>/repo-base/真存在.md
+  printf 'x\n' > <tmp>/box/rel-exists.md
+  cat > <tmp>/box/交接书.md <<'EOF'
+  # 交接书
+  ## 项目清单
+  - `真存在.md`（真存在，不该报）
+  - `proj/<项目名>/交付.md`（占位符，不该报）
+  - `ghost/真不存在.md`（真不存在，必须报）
+  - `./rel-exists.md`（相对存在，不该报）
+  - `./rel-missing.md`（相对不存在，必须报）
+  EOF
+  printf '# 学习指南\n' > <tmp>/box/指南.md
+  node <subject> --handover <tmp>/box/交接书.md --guide <tmp>/box/指南.md --repo <tmp>/repo-base
+  test -e <tmp>/repo-base/真存在.md && test -e <tmp>/box/rel-exists.md && echo '自证①：真存在／相对存在两项在场'
+  test ! -e <tmp>/repo-base/ghost/真不存在.md && test ! -e <tmp>/box/rel-missing.md && echo '自证②：真不存在／相对不存在两项确实缺失'
+run: |
+  本库装置：node <tmp>/toys/p13-relaxed-path-judge.mjs（缺省＝改松版；传 strict 为对照）
+  通用：把五项路径夹具喂给"路径存在性判据"装置；示例：node <你的装置> --handover <tmp>/box/交接书.md --guide <tmp>/box/指南.md --repo <tmp>/repo-base
+expect: |
+  报警 = 恰好报出 2 处（真不存在 ＋ 相对不存在）；真存在/占位符/相对存在三项不报 —— 双向判据成立，
+         退修没有把任何一类整类跳过。
+  漏   = 只报 1 处（相对路径整类被跳过）或 0 处——"不报了"与"放宽了"在输出上与真修复不可区分，
+         必须用五项夹具才拆得开（历史实测：按退修单修后恰好 2 处，含 ../ 一类没被整类放过）。
+evidence: "退修后双向探针 ⇒ 恰好 2 处（proj/__no_such__/ ＋ ../__no_such_x__.md），真存在/占位符/相对存在三项全部没报；夹具即卡面 inject／run 所写"
+source: P13
+applies_to: [路径存在性判据, 经历过"消假阳性"退修的检查器]
+limits: 判据从未处理过相对路径类时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p13-relaxed-path-judge.mjs
+    cmd: node p13-relaxed-path-judge.mjs          # 默认＝改松版；strict 对照报满 2 处
+    observed: "FAIL 不存在: .tmp-p13/box/__no_such__/  (真不存在)／路径判据：报出 1 处 / 共 5 项／exit=1（strict 对照：报出 2 处——相对不存在那类被整类跳过）"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/两件套质检器/twopiece-lint.mjs
+    cmd: node twopiece-lint.mjs --handover <tmp>/tp-p13/box/交接书.md --guide <tmp>/tp-p13/box/指南.md --repo <tmp>/tp-p13/repo-base
+    observed: "交接书.md:7  项目清单路径不存在：`ghost/真不存在.md` …／交接书.md:9  项目清单路径不存在：`./rel-missing.md` …／共 2 处违规／exit=1 —— 五项夹具下恰好 2 处，双向判据成立"
+    verdict: 报警

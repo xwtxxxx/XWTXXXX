@@ -1,0 +1,37 @@
+id: p9-disk-cleared-runtime-alive
+title: 装置按"磁盘记录清零"宣布清理完成，运行时注册表里的清单原样活着
+catches: [假绿, 口径]
+severity: medium
+deps: [bash, node]
+inject: |
+  # 两层状态各自独立落点：磁盘记录 ＋ 运行时注册表（会话内存里那份的落盘等价物）
+  mkdir -p <tmp>/disk
+  for n in 1 2 3; do mkdir -p <tmp>/disk/agent-$n; printf '{"id":"agent-%s"}\n' "$n" > <tmp>/disk/agent-$n/session.json; done
+  printf 'agent-1\nagent-2\nagent-3\n' > <tmp>/runtime-registry.txt
+  ls <tmp>/disk | wc -l                 # 自证①：磁盘上有 3 条记录
+  wc -l < <tmp>/runtime-registry.txt    # 自证②：运行时注册表里也登记着 3 条 ⇒ 两层都在场，坏情况成立
+  node <subject>    # <subject>：清理装置（只清磁盘层，然后按磁盘判据宣布"清理完成"）
+
+run: |
+  本库装置：node <tmp>/toys/p9-disk-vs-runtime.mjs（无参数；装置自建等价两层夹具 → 只清磁盘 → 按磁盘判）
+  通用：让"清理装置"清空 <tmp>/disk 后立即比对运行时注册表；示例：node <你的清理装置> <tmp>/disk && cat <tmp>/runtime-registry.txt（应仍见 3 条）
+expect: |
+  报警 = 装置区分两层：磁盘计数与运行时计数**分开报**，两者不一致 ⇒ 报"列表还在、内容已没了"
+         并计非 0，或明确说"清显示需重启/动运行时"。
+  漏   = 只报磁盘 0 个 ＋ 宣布"清理完成"、退出码 0；而 list_agents 仍返回全部 N 条
+         （历史实测：删 23 个目录后盘上裸 uuid=0，list_agents 仍列 22 children）。
+evidence: "删后 Get-ChildItem $base -Directory → 18 个、裸 uuid = 0（盘上确实清了）；list_agents 仍返回 22 个 children（内存仍持有）——界面仍显示『23 个子智能体』，两层不一致的直接证据"
+source: P9
+applies_to: [清理/删除类装置, 同时维护磁盘与运行时两份状态的工具]
+limits: 只有一层状态（纯磁盘或纯内存）的装置不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p9-disk-vs-runtime.mjs
+    cmd: node p9-disk-vs-runtime.mjs
+    observed: "删盘后磁盘剩余目录: 0 个／list_agents() 仍返回 children: 3 个 -> agent-1, agent-2, agent-3／按磁盘判据：清理完成／exit=0"
+    verdict: 漏
+  - target: 本体工具
+    ref: 无对应本体
+    cmd: （无对应本体可跑）
+    observed: "8 件工具都只做磁盘上的文件/git/文档判据，没有任何一件管理运行时注册表（外部 agent/会话内存）——无对应本体"
+    verdict: 不适用

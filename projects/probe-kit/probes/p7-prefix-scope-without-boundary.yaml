@@ -1,0 +1,34 @@
+id: p7-prefix-scope-without-boundary
+title: "白名单按裸字符串前缀判定：--allow proj 连 proj2/ 一起放行"
+catches: [越权, 假绿]
+severity: high
+deps: [bash, node, git]
+inject: |
+  mkdir -p <tmp>/repo/proj <tmp>/repo/proj2 && cd <tmp>/repo && git init -q .
+  printf 'x\n' > proj/a.txt
+  printf 'y\n' > proj2/x.txt        # 同前缀不同目录：应被拦，裸前缀判定会放行
+  git add -A
+  node <subject> --repo <tmp>/repo --allow proj   # <subject>：暂存区越界检查装置（--allow 是路径语义）
+  git -C <tmp>/repo -c core.quotepath=false diff --cached --name-only    # 自证：暂存区同时有 proj/a.txt 与 proj2/x.txt（坏情况真的成立）
+run: |
+  本库装置：node <tmp>/toys/p7-prefix-guard.mjs --allow proj proj2/x.txt proj/正常.txt（--allow 后跟允许目录，其余为待检路径）
+  通用：把同前缀兄弟目录的文件喂给"暂存区/白名单越界检查"装置；示例：node <你的装置> --repo <tmp>/repo --allow proj
+expect: |
+  报警 = 退出码非 0，且明确报出 proj2/x.txt 越界（判定为 f === allow || f.startsWith(allow + '/')）。
+  漏   = 退出码 0 ＋ 打印"OK 全部在允许范围内"——恰好放行该工具存在的唯一目的所防的东西，
+         不报错、不崩溃（历史实测 OK ／ exit 0，修复后 14/14 含两条边界反例回归）。
+evidence: "修复前 --allow proj ＋ 暂存 proj2/x.txt → OK／exit 0；修复后 node test.mjs → 14/14 ＋ 退出码 0（含 proj2/x.txt、proj-old.md 两条★边界反例）"
+source: P7
+applies_to: [任何"前缀/包含/白名单"类判定, 越界防护/暂存区检查装置]
+limits: 白名单只有完整路径、无同前缀兄弟目录时不受影响
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p7-prefix-guard.mjs
+    cmd: node p7-prefix-guard.mjs --allow proj proj2/x.txt proj/正常.txt
+    observed: "OK 全部在允许范围内（检查了 2 个）：proj2/x.txt, proj/正常.txt／exit=0 —— 越界文件被判合规"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/stage-guard/stage-guard.mjs
+    cmd: node stage-guard.mjs --repo <tmp>/repo --allow proj    # 暂存区里是 proj/a.txt ＋ proj2/x.txt
+    observed: "越界: 1 个文件不在允许范围内（允许: proj）／- proj2/x.txt ／exit=1（对照 --allow proj2 → 报 proj/a.txt 越界 exit=1，边界按路径语义两向成立）"
+    verdict: 报警

@@ -1,0 +1,34 @@
+id: p3-doc-date-parroted
+title: 生成报告时把"输入文档里写的日期"当成"今天"，落款整体错一天以上
+catches: [身份, 口径]
+severity: medium
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/out
+  printf '# 交付说明\n' > <tmp>/out/README.md
+  printf 'console.log("自检结果: 1 通过, 0 失败");\n' > <tmp>/out/test.mjs
+  printf '# 任务包\n## 背景\n本包落款日期：2026-09-30。\n' > <tmp>/任务包.md   # 文档里带着一个过期日期
+  date +%F                                                    # 现场真值（实测日 2026-10-02）
+  node <subject> --dir <tmp>/out --task <tmp>/任务包.md       # <subject>：会生成带时间戳报告的装置
+  grep -o '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' <tmp>/任务包.md    # 自证（关系型）：读回包内落款日期（2026-09-30），与上面 date 的现场真值比对 ⇒ 已过期即坏情况成立
+run: |
+  本库装置：node <tmp>/toys/p3-stale-date.mjs（无参数；被沿用的文档日期内置于装置）
+  通用：把带着过期日期的输入文档喂给"生成落款/报告"的装置（按它自己的接口传）；示例：node <你的装置> --task <tmp>/任务包.md
+expect: |
+  报警 = 报告里的生成时间戳为**现取**时刻（晚于任务包落款、且与 date 现值同日），不照抄输入文档的日期。
+  漏   = 报告时间戳或落款与输入文档里的日期一致（历史实测把 2026-09-30 抄进 6 个日期，而当天实为 2026-10-01）。
+evidence: "Get-Date -Format 'yyyy-MM-dd' → 2026-10-01，而沿用文档里的 2026-09-30 给条目落款 ⇒ 一处文档 6 个日期全错，事后逐个改正（git log: fix(repo): 日期改正）"
+source: P3
+applies_to: [生成报告/落款的装置, 从输入文档取字段填充输出的工具]
+limits: 装置不生成任何时间戳时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p3-stale-date.mjs
+    cmd: node p3-stale-date.mjs
+    observed: "### Q1 2026-09-30 新写的一条教训／### Q2 2026-09-30 再写一条／落款来源: 文档（未现取时间） | verdict: OK／exit=0（对照 Get-Date: 2026-10-02，实测日 2026-10-02）"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/验收台/accept-kit.mjs
+    cmd: node accept-kit.mjs --dir <tmp>/out --task <tmp>/任务包.md    # 任务包内写着过期日期 2026-09-30
+    observed: "- 生成：2026-10-01T16:38:00.311Z（accept-kit 机械检查；判定权在审查者）／exit=0 —— 时间戳为 new Date() 现取（ISO UTC 形态；本地时刻 2026-10-02 00:38），未沿用任务包里的 2026-09-30"
+    verdict: 报警

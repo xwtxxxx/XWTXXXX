@@ -1,0 +1,33 @@
+id: p2-default-codepage-line-swallow
+title: 用系统默认代码页解码 UTF-8 LF-only 文件时静默吞行（不报错、行数变少）
+catches: [编码, 静默跳过]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>
+  : > <tmp>/cn-lf-utf8.md
+  for i in $(seq 1 84); do printf '第 %s 行：填充内容，不触发任何判据。\n' "$i" >> <tmp>/cn-lf-utf8.md; done
+  printf '末行漂移：旧投递箱 <投递箱> 已废弃。\n' >> <tmp>/cn-lf-utf8.md   # 关键行在第 85 行
+  wc -l < <tmp>/cn-lf-utf8.md       # 真值：85（LF 字节数）
+  node <subject> --root <tmp>       # <subject>：逐行扫描 .md 并报漂移行号的装置（不显式声明编码）
+run: |
+  本库装置：node <tmp>/toys/p2-silent-line-swallow.mjs [文件]（无参数即用内置 85 行 LF-only 样本；位置参数可选传文件路径）
+  通用：让"按系统默认编码读文件并报行数"的装置读这份文件；示例：node <你的装置> <tmp>/cn-lf-utf8.md
+expect: |
+  报警 = 漂移被报出且行号 == 85（与 LF 字节真值一致），或装置明确报"读取/解码失败"。
+  漏   = 行号小于 85（历史实测 85→38）或漂移整条消失，且不报错、退出码 0。
+evidence: "PS 5.1 ＋ chcp 936 实测：同一文件默认编码读 38 行、-Encoding UTF8 读 85 行、按字节统计 LF=85；同内容转 CRLF 后默认编码读 85 行（85→38，全程不报错）"
+source: P2
+applies_to: [按系统默认编码读文件的脚本, 行数统计, 逐行扫描报行号的判据工具]
+limits: 显式声明 UTF-8 读取的装置不受影响；纯 ASCII 文件不受影响；需老式 DBCS 代码页现场（如 936）才可复现
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p2-silent-line-swallow.mjs
+    cmd: node p2-silent-line-swallow.mjs
+    observed: "真值(LF 字节数): 85／默认代码页读到: 38 行／同内容转 CRLF 后默认代码页读到: 85 行／exit=0"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/doc-drift-check/doc-drift-check.mjs
+    cmd: node doc-drift-check.mjs --root <tmp>/ddc-p2/root     # 85 行 LF-only UTF-8，漂移在第 85 行
+    observed: "漂移: 1 处（扫描 1 个文件；查 0 条路径、0 处编号声明、疑似未识别 0 处）／- [R1] 长文档.md:85  旧投递箱名 `<投递箱>`（应为 `任务箱`）／exit=1 —— 行号与 LF 真值 85 一致，无吞行"
+    verdict: 报警

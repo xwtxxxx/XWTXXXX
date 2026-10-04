@@ -1,0 +1,35 @@
+id: p12-range-declaration-never-matched
+title: 判据正则写死单条形态，区间声明一条也匹配不到 ⇒ 0 命中静默记"全对"、无计数可查
+catches: [静默跳过, 假绿]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/root
+  printf '### P8 条目\n### P9 条目\n### P10 条目\n' > <tmp>/root/学习.md        # 真值：最新编号 P10
+  printf '详见学习.md 的 P1–P8 段。\n' > <tmp>/root/交接书.md                    # 坏声明：区间末尾 8 ≠ 10
+  node <subject> --root <tmp>/root   # <subject>：核对编号声明与真实最大号是否一致的装置
+  grep -o 'P[0-9][0-9]*' <tmp>/root/学习.md | tail -1    # 自证①：真值最新编号＝P10
+  cat <tmp>/root/交接书.md                               # 自证②：坏声明 P1–P8 在场 ⇒ 与真值不一致成立
+run: |
+  本库装置：node <tmp>/toys/p12-regex-never-matched.mjs bad（位置参数 good|bad；bad＝夹具里注入坏声明 P1–P8）
+  通用：把带区间声明的文档喂给"编号声明核对"装置；示例：node <你的装置> --root <tmp>/root
+expect: |
+  报警 = 区间声明被识别并核对（报"P1–P8 与实际最大号 P10 不符"），且输出带**可观测计数**
+         （"查 1 处编号声明"）——计数 ≥1 证明判据真的扫到了东西。
+  漏   = 正则写死"P1" ⇒ 区间一条不匹配 ⇒ 0 命中 ⇒ 打印 OK、退出码 0，且输出无任何计数，
+         与"全都对"长得一模一样（历史实测：注入错声明，工具不报警；6/9 FAIL 里 3 个同源）。
+evidence: "修后注入探针：P1–P10→P1–P8 ⇒ [R3] 交接文档第 29 行 …不符 ＋ 退出码 1；任务→务 ⇒ 5 处 R1 ＋ 退出码 1；输出自带『查 N 处』计数（判据必须输出可观测计数的规矩）"
+source: P12
+applies_to: [核对编号/声明/引用的判据装置, 用正则匹配结构化形态的扫描器]
+limits: 文档从不使用区间引用形态时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p12-regex-never-matched.mjs
+    cmd: node p12-regex-never-matched.mjs bad
+    observed: "OK 无漂移／exit=0 (mode=bad) —— 交接书里躺着 P1–P8 坏声明（真值 P10），装置 0 命中即宣布全对，且无计数可查"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/doc-drift-check/doc-drift-check.mjs
+    cmd: node doc-drift-check.mjs --root <tmp>/ddc-p12/root
+    observed: "漂移: 1 处（扫描 2 个文件；查 0 条路径、1 处编号声明、疑似未识别 0 处）／- [R3] 交接书.md:1  编号声明 P1–P8 与实际最大号 P10 不符／exit=1 —— 区间被识别、计数 1 可见"
+    verdict: 报警

@@ -1,0 +1,37 @@
+id: p25-selftest-by-reading-only
+title: 审查/自审只读源码不真跑 ⇒ 明晃晃的 bug 被宣布"自审通过：无问题"
+catches: [假绿, 静默跳过]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/target
+  cat > <tmp>/target/math.mjs <<'EOF'
+  export const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length - 1; // 手滑多减了 1
+  EOF
+  node <subject> <tmp>/target/math.mjs    # <subject>：只读源码做静态扫描的"自审"装置
+  node -e "import(require('url').pathToFileURL('<tmp>/target/math.mjs')).then(m => console.log('avg([1,2,3]) =', m.avg([1,2,3]), '（真值应为 2）'))"
+  printf 'console.log("自检结果: 0 通过, 1 失败");\nprocess.exit(1);\n' > <tmp>/target/test.mjs    # 必败顶层自测：验收台必须真跑它才下结论
+run: |
+  本库装置：node <tmp>/toys/p25-review-by-reading.mjs（缺省只读自审；--execute 为探针对照）
+  通用：让"只读源码"的审查装置对带 off-by-one 的目标下结论，再真跑一次目标比对；示例：node <你的装置> <tmp>/target/math.mjs
+expect: |
+  报警 = 装置至少真跑一次目标（探针驱动）：avg([1,2,3]) = 1 ≠ 2 ⇒ 报出；或明说"未运行任何
+         目标代码，此为静态结论"，不下"通过"判语。
+  漏   = 静态扫描（TODO/FIXME/签名齐全）后宣布"自审通过：无问题"，而探针一跑就现形
+         avg=1≠2（历史实测：决定审查质量的不是谁审，而是有没有拿实测探针去撞——
+         作者自审配 diff＋探针也能 3/3 全中）。
+evidence: "材料＝外部 agent 自己交付的两工具：先与交付版逐字节 diff，再写探针驱动实测 ⇒ 3 条全中 0 证伪（对照：无探针那轮 6/7）；avg 探针：avg([1,2,3]) = 1（真值应为 2）"
+source: P25
+applies_to: [自审/代码审查装置, 任何"只读不跑"的验收动作]
+limits: 目标是无副作用的纯声明文件、静态可全判时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p25-review-by-reading.mjs
+    cmd: node p25-review-by-reading.mjs          # 默认只读；--execute 为探针对照
+    observed: "自审：读了目标源码 2 行／自审：静态扫描 TODO/FIXME/console.log => 干净／自审：函数签名齐全 => 是／自审通过：无问题（以上结论未运行过任何一行目标代码）／exit=0（--execute 对照：avg([1,2,3]) = 1（真值应为 2）——真跑一次就现形）"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/验收台/accept-kit.mjs
+    cmd: node accept-kit.mjs --dir <tmp>/target    # 被检件 test.mjs 必败
+    observed: "accept-kit: [自测] 退出码 1；最后一行「0 通过, 1 失败」／…｜ 自测 失败（退出码 1） …／exit=1 —— 验收台实际运行自测，结论来自执行而非阅读"
+    verdict: 报警

@@ -1,0 +1,36 @@
+id: p27-baked-default-probes
+title: 无参数时对"写死的作者现场路径"做探测，查不到就报"全部合规"、退出 0
+catches: [环境耦合, 假绿]
+severity: high
+deps: [bash, node]
+inject: |
+  mkdir -p <tmp>/standalone
+  cp <repo>/tools/check-all/check-all.mjs <tmp>/standalone/    # 把装置**单独**复制到陌生目录（不带它的环境）
+  ls -A <tmp>/standalone    # 自证：目录里只有装置这一个文件 ⇒ "孤立"成立
+  cd <tmp>/standalone && node check-all.mjs --list    # 无参数（默认值＝作者现场）
+
+run: |
+  本库装置：node <tmp>/toys/p27-baked-default-dir.mjs（无参数即用写死的默认路径；位置参数可选传目录）
+  通用：把装置单独复制到陌生目录后无参数直跑；示例：cp <repo>/你的装置.mjs <tmp>/standalone/ && node <tmp>/standalone/你的装置.mjs
+expect: |
+  报警 = 装置要么显式要求参数（缺参数报用法错误、非 0），要么默认值指向当前工作目录；
+         自证失败时大声退出（exit 2 ＋ 逐条列出哪些判据的 cwd/脚本不存在），
+         绝不对作者机器的写死路径做 existsSync 探测、更不报"全部合规"。
+  漏   = 对写死的 <外部路径> 做 existsSync → false ⇒ "未发现交付件 ⇒ 全部合规"、
+         退出码 0——"没查到"被当成"查过了没问题"（历史实测：8 入口×6 维度 37 条证据——
+         默认清单跑不起来／无参数扫错树／existsSync 探测真实仓库路径，同属"默认值＝作者现场"）。
+evidence: "check-all 默认清单判据路径由脚本位置推断、真仓库检查写死仓库根；doc-drift-check 无参数按脚本位置推 root 且对文档反引号里的仓库绝对路径做 existsSync 探测（执行者当场披露并停手）；taskpack-check 无参 exit 1（应 2）／mdtable2csv --help 当文件名（ENOENT）／check-all --help exit 2／prog --help exit 0——四种形态互不相同，『同类操作行为不一致』成立"
+source: P27
+applies_to: [带默认值的任何工具, '"零参数即可用"为卖点的装置']
+limits: 默认值指向当前工作目录、或无参数即报用法错误时不适用
+verify:
+  - target: 中立玩具装置
+    ref: <tmp>/toys/p27-baked-default-dir.mjs
+    cmd: node p27-baked-default-dir.mjs
+    observed: "清单来源：默认值（作者现场，写死）／检查目录：<外部路径>／探测：existsSync(…) = false／检查了 0 项交付件／未发现交付件 ⇒ 全部合规／exit=0 —— 查不到＝合规"
+    verdict: 漏
+  - target: 本体工具
+    ref: <repo>/tools/check-all/check-all.mjs
+    cmd: cp check-all.mjs <tmp>/standalone/ && node <tmp>/standalone/check-all.mjs --list    # 单文件裸搬到陌生目录
+    observed: "环境错误: 判据清单不合法（拒绝执行，绝不当作通过）:／- 判据「doc-drift-check 扫描」的 cwd 不存在: …\\<tmp>\\doc-drift-check／- 判据「…」的脚本不存在: …（10 条判据逐条自证，全部列出）／exit=2（无参数直跑同为 exit=2）—— 搬家后大声拒绝、路径全部解析在副本自己的树内，未探测作者现场、未冒充绿。注：默认清单在陌生树**不可用**（P27 原发现），但它 fail-fast 不 fail-open"
+    verdict: 报警
