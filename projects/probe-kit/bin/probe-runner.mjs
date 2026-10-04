@@ -1,11 +1,13 @@
 // probe-runner.mjs —— 探针运行器（零依赖单文件，只用 node: 内建）
-// 用法：node probe-runner.mjs --cards <卡目录> --toys <玩具目录> [--repeat N] [--only <卡文件>]
+// 用法：node probe-runner.mjs --cards <卡目录> --toys <玩具目录> [--work <目录>] [--repeat N] [--only <卡文件>]
 //                                        [--json] [--quiet] [--report <md>] [--json-out <json>]
 // 语义：
 //   - 每张卡每条 verify：<tmp> 替换为本次运行的夹具目录；toys/pNN-*.mjs 从 --toys 拷入夹具后真跑
 //   - 对账只认退出码：verdict=漏 ⇒ 期望 exit 0；verdict=报警 ⇒ 期望 exit≠0；不适用 ⇒ skipped
 //   - <repo> 本体工具不在材料里 ⇒ 记 skipped 并计数，不假装、不自造替身
 //   - --repeat N：整套卡跑 N 轮（每轮独立夹具），同一卡各轮结论不同 ⇒ 报「不稳定」
+//   - --work <目录>（T32-D3）：夹具建在它下面（默认：系统临时目录 os.tmpdir()）—— 本包被装进**只读的
+//     node_modules** 时，往自己安装目录里建夹具必然失败 ⇒ 夹具根外置；不传 --work 的既有调用式保持可用
 // 退出码：0 全一致且稳定｜1 有不一致/跑失败/不稳定｜2 用法或环境错误
 //
 // inject 预置（R1）：卡面 inject 里的 mkdir -p / printf '>' / cd / && 段在夹具内真执行；
@@ -14,6 +16,7 @@
 // 非 ASCII 路径（R4）：cwd/卡目录/玩具目录含非 ASCII ⇒ 启动打印显式告警（stderr），纯 ASCII 不打印。
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -398,6 +401,8 @@ function usage() {
     '选项：',
     '  --cards <dir>     必填。探针卡（YAML）目录',
     '  --toys <dir>      必填。中立玩具装置目录',
+    '  --work <dir>      夹具根目录（默认：系统临时目录 os.tmpdir()）。本包被装进**只读的 node_modules** 时',
+    '                    往安装目录建夹具必然失败 ⇒ 用它指到可写目录；夹具根为 <work>/.tmp-pr-<pid>，跑完自清',
     '  --repeat <N>      整套卡跑 N 轮（默认 1）；同一卡各轮结论不同 ⇒ 报「不稳定」',
     '  --only <file>     只跑指定的卡文件（须在卡目录内）',
     '  --json            stdout 只输出 JSON（人读摘要抑制）',
@@ -412,13 +417,13 @@ function usage() {
     '  git 段（红线：不执行 git）与 node/ls/echo 自证段显式跳过并随 --json 输出；',
     '  玩具依赖 inject 且因缺 git 预置而崩溃 ⇒ skipped + skip_reason（不静默崩）。',
     '稳定性：--repeat N 各轮独立夹具；同一卡各轮结论不同 ⇒ 报「不稳定」且总退出码为 1。',
-    '非 ASCII 路径：cwd/卡目录/玩具目录含非 ASCII 时启动打印告警（stderr）；纯 ASCII 不打印。',
+    '非 ASCII 路径：cwd/卡目录/玩具目录/work 目录含非 ASCII 时启动打印告警（stderr）；纯 ASCII 不打印。',
     '退出码：0 全一致且稳定｜1 有不一致/跑失败/不稳定｜2 用法或环境错误',
   ].join('\n');
 }
 
 function parseArgs(argv) {
-  const opt = { repeat: 1, cards: null, toys: null, only: null, json: false, quiet: false, report: null, jsonOut: null, help: false };
+  const opt = { repeat: 1, cards: null, toys: null, work: null, only: null, json: false, quiet: false, report: null, jsonOut: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => (i + 1 < argv.length ? argv[++i] : null);
@@ -427,6 +432,11 @@ function parseArgs(argv) {
     else if (a === '--quiet' || a === '-q') opt.quiet = true;
     else if (a === '--cards') opt.cards = next();
     else if (a === '--toys') opt.toys = next();
+    else if (a === '--work') {
+      const v = next();
+      if (v === null || v === '') throw new CardParseError('参数错：--work 需要一个目录值（不许静默回落到默认目录，掩盖安装场景问题）');
+      opt.work = v;
+    }
     else if (a === '--repeat') opt.repeat = next();
     else if (a === '--only') opt.only = next();
     else if (a === '--report') opt.report = next();
@@ -451,9 +461,11 @@ function toyBasenameOf(ref) {
   return m ? m[1] : null;
 }
 
-function runAll(opt, cardsDir, toysDir, cards) {
-  const fixtureRoot = join(SCRIPT_DIR, `.tmp-pr-${process.pid}`);
-  const scrub = makeScrubber([SCRIPT_DIR, cardsDir, toysDir, fixtureRoot]);
+function runAll(opt, cardsDir, toysDir, cards, workDir = tmpdir()) {
+  // T32-D3：夹具根外置 —— <workDir>/.tmp-pr-<pid>（默认 workDir = 系统临时目录）。
+  // 安装目录（SCRIPT_DIR）不再承担夹具职责 ⇒ 只读 node_modules 场景可跑；不传 --work 的既有调用式保持可用。
+  const fixtureRoot = join(workDir, `.tmp-pr-${process.pid}`);
+  const scrub = makeScrubber([SCRIPT_DIR, cardsDir, toysDir, fixtureRoot, workDir]);
   const toyFiles = readdirSync(toysDir).filter((f) => {
     try { return statSync(join(toysDir, f)).isFile(); } catch { return false; }
   });
@@ -693,6 +705,15 @@ export async function main(argv = process.argv.slice(2)) {
   for (const [name, dir] of [['--cards', opt.cards], ['--toys', opt.toys]]) {
     if (!existsSync(dir) || !statSync(dir).isDirectory()) return die(2, `${name} 目录不存在或不是目录：「${dir}」`);
   }
+  // T32-D3：夹具根目录解析 —— 默认系统临时目录（只读安装场景写不了安装目录）；--work 显式给 ⇒ 用它。
+  // 这里先探可用性（fail-fast ⇒ exit 2），夹具根 = <workDir>/.tmp-pr-<pid> 由 runAll 建删。
+  const workDir = opt.work != null ? resolve(opt.work) : tmpdir();
+  try {
+    mkdirSync(workDir, { recursive: true });
+    if (!statSync(workDir).isDirectory()) return die(2, `--work 不是目录：「${workDir}」`);
+  } catch (e) {
+    return die(2, `--work 目录不可用（${e.code ?? e.message}）：${workDir}`);
+  }
   const onlyBase = opt.only ? basename(opt.only) : null;
   let cardFiles = readdirSync(opt.cards).filter((f) => /\.ya?ml$/.test(f)).sort();
   if (opt.only) {
@@ -701,8 +722,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (!cardFiles.length) return die(2, '卡目录中没有 .yaml 卡（0 张卡不许当作通过）');
 
-  // R4：非 ASCII 路径显式告警（stderr，不污染 --json 的 stdout）；纯 ASCII 不打印
-  const warn = nonAsciiWarning([process.cwd(), resolve(opt.cards), resolve(opt.toys), SCRIPT_DIR]);
+  // R4：非 ASCII 路径显式告警（stderr，不污染 --json 的 stdout）；纯 ASCII 不打印（T32-D3：+work 目录）
+  const warn = nonAsciiWarning([process.cwd(), resolve(opt.cards), resolve(opt.toys), SCRIPT_DIR, workDir]);
   if (warn) process.stderr.write(warn + '\n');
 
   const cards = [];
@@ -713,7 +734,7 @@ export async function main(argv = process.argv.slice(2)) {
     cards.push({ file: f, card });
   }
 
-  const { rounds, scrub } = runAll(opt, opt.cards, opt.toys, cards);
+  const { rounds, scrub } = runAll(opt, opt.cards, opt.toys, cards, workDir);
   const agg = aggregate(cards, opt, rounds);
   const bad = agg.mismatch + agg.run_error > 0 || agg.stability.unstable > 0;
   const exitCode = bad ? 1 : 0;

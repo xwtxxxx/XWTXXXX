@@ -1,6 +1,6 @@
 {
   "name": "@xwtxxxx/probe-kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH 探针工具包：卡面合法性、卡契约校验、审计档生成 —— 四个零依赖 CLI ＋ 一个最小宿主插件壳。",
   "type": "module",
   "license": "MIT",
@@ -28,7 +28,8 @@
     "docs",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "dsh": {
     "bundle": {

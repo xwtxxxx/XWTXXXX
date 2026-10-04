@@ -36,12 +36,43 @@
  *      （宁可留假红，不可放走真红）。**角色分级只对「静默终止」生效** —— eval( 放进 install.mjs
  *      仍然 critical，角色不是放水通道。
  *
+ * v0.3（T28 第二轮 · 四条缺陷修复）：
+ *   ① D1 「剥注释/字符串」扩到**全部规则**的匹配（v0.2 只有「动态加载」，其余 6 条吃原始行）；
+ *      行号/摘录仍取原始行；真代码照报（正则字面量、跨行模板续行等"宁假红"边界原样保留）。
+ *      ⚠️ **v0.3.1 更正（主脑 P90）**：「全部规则」写宽了 —— 「混淆迹象」**回到吃原始行**（混淆的典型形态
+ *      就是字符串里的大 base64 blob；剥掉它＝把这一类信号整块删掉，真夹具 src/payload.js:9 行长 2657 当场漏报）。
+ *      现行口径：**7 条正则在 code 上匹配；「动态加载」吃 code；「混淆迹象」吃原始行**。
+ *   ② D2 补 5 个 Node API 词形：execFile(/execSync(/spawnSync(（子进程）、rmSync(（写盘）、裸 request(（出网，
+ *      带 (?<!\.) 负向断言避免与 http(s).request 重复计）。⚠️ exec/spawn 家族的漏报在惯用代码里常被
+ *      import 'child_process' 字面量的既有命中「掩盖」——测漏报时夹具不得出现 child_process 字样。
+ *   ③ D3 「混淆迹象」改整行有效密度判（先剥全部空白再算长度与占比）⇒ 插空格绕过失效；正常长行不误报。
+ *   ④ D4 审计结论 reject ⇒ 退出码 3（新档；0/1/2 原义不变；--help 已同步）。
+ *      定性：v0.2 的 --help 只承诺过 0/1/2，reject ⇒ 0 是「意图 vs 行为」缺口（门禁写 || exit 1 拦不住），
+ *      不是「文档契约被违反」。
+ *
+ * v0.4（T32 · 补漏与收窄，逐条点名不扩围）：
+ *   ① D1 补词形（假阴性）：子进程 +fork(；写盘 +copyFile(Sync)?(／rename(Sync)?(／truncate(Sync)?(
+ *      ／createWriteStream；出网 +「import { request } from …」—— import-only 形态判 **code 文本**：
+ *      剥字符串后只见 `import { request } from ''`，模块名不可见 ⇒ 任何模块的 request 导入都算（宁假红）；
+ *      require 解构形态（const { request } = require('node:http')）不在本单点名范围，未加（见 T32 报告·建议）。
+ *   ② D2 收窄两条假红（每条都有"真信号仍报"的正例）：
+ *      exec( ⇒ **(?<!\.)\bexec\(**（`re.exec(line)` 这类 RegExp.prototype.exec 不再报子进程）；
+ *      .env ⇒ **只认引号包裹的路径字面量**（/['"][^'"]*\.env/，该模式判**原始行**——引号里的 '.env' 路径
+ *      正是真信号，与「混淆迹象」同理）⇒ `process.env.X` 不再报碰凭据；
+ *      `fs.readFileSync('.env')`／`require('./a.env')` 照报。
+ *      ⚠️ 代价（如实写明）：`cp.exec(…)` 这类「某对象的方法调用」形态也被 (?<!\.) 静默 —— 本机静态口径
+ *      无法区分 receiver 是正则还是 child_process 实例，宁收窄（方向见 T32 报告·建议）。
+ *   ③ D4 「## Static findings」标题带原始命中数：`## Static findings（原始命中 N 条，折行后 M 条）`——
+ *      与 Review trail 口径行的「原始命中 N 条」**同源同值**（rawHits）；validateRecord 的段位校验同步改
+ *      按新形态核（**旧裸标题会被拦** —— 两处必须同步改，P66 的教训）。
+ *
  * 输出：默认打到 stdout（首行 === 协议文件名 ===，便于直接复制）；
  *   --out <目录> ⇒ 真写出 <目录>/<协议文件名>（目录不存在则创建；同名已存在 ⇒ 拒写 exit 2）；
  *   --json ⇒ 机器可读（filename／plugin／version／recommendation／findings 等）。
  *
- * 退出码：0 达标 ｜ 1 自检失败（产出档缺必填段位／Recommendation 非法 —— 拦下不产出，不许静默出档）
- *   ｜ 2 用法或参数错（--plugin 缺失/不存在/无 package.json/无 name、未知 flag、--stamp 格式错、写出失败）。
+ * 退出码：0 达标（结论非 reject）｜ 1 自检失败（产出档缺必填段位／Recommendation 非法 —— 拦下不产出，不许静默出档）
+ *   ｜ 2 用法或参数错（--plugin 缺失/不存在/无 package.json/无 name、未知 flag、--stamp 格式错、写出失败）
+ *   ｜ 3 审计结论为 reject（机判 critical 或 --recommendation reject；审计档已产出，供门禁 || 拦截）。
  *
  * 零依赖：只用 node:fs／node:path／node:url；文件 UTF-8 无 BOM、LF。
  */
@@ -50,7 +81,7 @@ import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const RECORD_TOOL = 'audit-kit.mjs v0';
+const RECORD_TOOL = 'audit-kit.mjs v0.4';
 const RULE_NAMES = '动态执行／子进程／出网／写盘／碰凭据／动态加载／混淆迹象／静默终止';
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // >2MB 的文件跳过（v0：防巨型产物拖垮扫描；如实计入 skipped）
 // v0.1（2026-10-02 审查者改）：**只扫代码文件** —— 实测真插件上"碰凭据"266 条里大量来自审计协议文档／
@@ -63,14 +94,26 @@ const SNIPPET_MAX = 120;                // finding 里引用源码行的截断�
 // suspicious ＝ 能力面信号（子进程／出网／写盘／静默终止），真伪要靠 agent 甄别 —— 机器不替人拍板。
 // v0.2：「静默终止」的 severity 会被「文件角色」改判（install/cli/test ⇒ info，见 scanLine 与 classifyFileRole）；
 //       RULES 表本身一字未动 —— 判级调整发生在命中装配处，且只对这一条生效。
+// v0.4（T32）：patterns 判 code 文本（v0.3 口径不变）；**rawPatterns 判原始行** —— 仅用于「真信号恰恰活在
+//   字符串字面量里」的词形（.env 路径字面量），与「混淆迹象」吃原始行同理（P90）。
 const RULES = [
   { name: '动态执行', severity: 'critical', patterns: [/\beval\(/, /new Function\(/, /vm\.runIn/] },
-  { name: '子进程', severity: 'suspicious', patterns: [/child_process/, /\bspawn\(/, /\bexec\(/] },
-  { name: '出网', severity: 'suspicious', patterns: [/fetch\(/, /http\.request/, /https\.request/, /WebSocket/] },
-  { name: '写盘', severity: 'suspicious', patterns: [/writeFile/, /appendFile/, /\brm\(/, /unlink/, /mkdir/] },
+  // v0.3（T28-D2 补漏报词形）：\bexec\(／\bspawn\( 管不到 -File／-Sync 后缀 ⇒ 补 execFile/execSync/spawnSync/rmSync；
+  // 裸 request( 用 (?<!\.) 负向断言 ⇒ https.request(/http.request( 仍由各自原模式独占命中（pats 不重复计）。
+  // v0.4（T32-D1/D2）：+fork(；exec( 收窄为 (?<!\.)\bexec\( —— re.exec(line) 的 RegExp.exec 不再报（真夹具
+  //   index.js:41 `const m = re.exec(line);` 是假红）；代价：cp.exec( 方法调用形态同被静默（头部注释②已写明）。
+  { name: '子进程', severity: 'suspicious', patterns: [/child_process/, /\bspawn\(/, /\bspawnSync\(/, /\bfork\(/, /(?<!\.)\bexec\(/, /\bexecFile\(/, /\bexecSync\(/] },
+  // v0.4（T32-D1）：+import-only request —— 判 code 文本上 `import { request } from ''`（剥字符串后引号保留、
+  //   模块名不可见 ⇒ 任何模块的 request 导入都算，宁假红）；注释/字符串里"提到"这句 ⇒ 整段被剥 ⇒ 不命中。
+  { name: '出网', severity: 'suspicious', patterns: [/fetch\(/, /http\.request/, /https\.request/, /(?<!\.)\brequest\(/, /import\s*\{[^}]*\brequest\b[^}]*\}\s*from\s*['"]['"]/, /WebSocket/] },
+  // v0.4（T32-D1）：+copyFile(Sync)?(／rename(Sync)?(／truncate(Sync)?(／createWriteStream（写盘面）。
+  { name: '写盘', severity: 'suspicious', patterns: [/writeFile/, /appendFile/, /\brm\(/, /\brmSync\(/, /\bcopyFile(?:Sync)?\(/, /\brename(?:Sync)?\(/, /\btruncate(?:Sync)?\(/, /\bcreateWriteStream\b/, /unlink/, /mkdir/] },
   // 碰凭据：**v0.1 降级为 suspicious** —— 原 v0 按我任务包写的「severity 取高」把它定成 critical，实测真插件上
   // 直接一票 reject（假红）—— 规格给错、执行者照做，假红就是这么产生的。
-  { name: '碰凭据', severity: 'suspicious', patterns: [/\.credentials/, /\.env/, /apiKey/, /token/, /secret/] },
+  // v0.4（T32-D2）：.env 从 patterns（code）**移到 rawPatterns（原始行）**且只认引号包裹的路径字面量 ——
+  //   `process.env.X` 是环境变量访问不是碰凭据文件（真夹具 net.js:12／store.js:10 全是假红）；
+  //   `fs.readFileSync('.env')`／`require('./a.env')` 的引号路径才是真信号 ⇒ 判原始行、照报。
+  { name: '碰凭据', severity: 'suspicious', patterns: [/\.credentials/, /apiKey/, /token/, /secret/], rawPatterns: [/['"][^'"]*\.env/] },
   { name: '动态加载', severity: 'critical', kind: 'dynamicRequire' },
   { name: '混淆迹象', severity: 'critical', kind: 'obfuscation' },
   { name: '静默终止', severity: 'suspicious', patterns: [/process\.exit\(/] },
@@ -142,18 +185,18 @@ function dynamicRequireHits(line) {
   return hits;
 }
 
-// 规则 7：单行 ≥2000 字符，且行内存在 ≥2000 字符的连续 token、其字符 ≥95% 落在 base64/hex 字母表
-//（token 口径避免把长英文注释/中文文档误判成 base64；纯压缩 JS 因标点占比高也不会命中）
+// 规则 7（v0.3 重写，T28-D3）：整行「有效密度」判 —— 先剥去**全部空白**再算长度与占比：
+//   插任意个空格不再把一个 blob 切成多个 <2000 的段（旧「逐 token 判」插一个空格即绕过）；
+//   占比闸照旧把正常长行挡在外面（压缩 JS 标点占比高 ⇒ <95% 不命中）。**匹配文本是原始行**
+//   （v0.3.1 主脑 P90 更正：混淆的典型形态就是字符串里的大 blob，剥注释/字符串会把它整块删掉）；
+//   长度与占比仍在剥空白后的文本上算。
 const B64ISH = /[A-Za-z0-9+/=_.-]/;
-function obfuscationHit(line) {
-  if (line.length < 2000) return false;
-  for (const tok of line.split(/\s+/)) {
-    if (tok.length < 2000) continue;
-    let n = 0;
-    for (const c of tok) if (B64ISH.test(c)) n++;
-    if (n / tok.length >= 0.95) return true;
-  }
-  return false;
+function obfuscationHit(text) {
+  const compact = text.replace(/\s+/g, '');
+  if (compact.length < 2000) return false;
+  let n = 0;
+  for (const c of compact) if (B64ISH.test(c)) n++;
+  return n / compact.length >= 0.95;
 }
 
 function snippet(line) {
@@ -237,8 +280,12 @@ export function classifyFileRole(relPosix, basename, pkg, fileText) {
   return 'lib';
 }
 
-// v0.2：scanLine 增加两个可选入参 —— code＝剥注释后的代码文本（只供「动态加载」），role＝文件角色
-//（只影响「静默终止」的判级）。不给入参时行为与 v0.1 完全一致（code=line、role='lib'）。
+// v0.3（T28-D1）：code＝剥注释/字符串后的代码文本 —— **7 条正则规则**在它上面匹配（v0.2 只有「动态加载」，
+// 其余 6 条吃原始行，是本单要修的缺陷）；role 只影响「静默终止」的判级。不给入参时行为同旧签名
+//（code=line、role='lib'）。行号与 snippet 仍取**原始行**（口径不变，剥离只换"匹配用文本"）。
+// v0.4（T32）：新增 rawPatterns 口径 —— 规则可选地带 rawPatterns（判**原始行**），专用于"真信号恰恰活在
+// 字符串字面量里"的词形（目前只有碰凭据的 .env 路径字面量）；patterns（code）与 rawPatterns（原始行）的
+// 命中并入同一条 finding 的 patterns 列表。
 export function scanLine(line, code = line, role = 'lib') {
   const hits = [];
   for (const rule of RULES) {
@@ -246,9 +293,17 @@ export function scanLine(line, code = line, role = 'lib') {
       const args = dynamicRequireHits(code); // v0.2：剥注释/字符串后的代码文本；行号与 snippet 仍取原始行
       if (args.length > 0) hits.push({ rule: rule.name, severity: rule.severity, message: snippet(line), patterns: args.map((a) => `非字面量参数：${a}`) });
     } else if (rule.kind === 'obfuscation') {
-      if (obfuscationHit(line)) hits.push({ rule: rule.name, severity: rule.severity, message: snippet(line), patterns: ['单行≥2000字符且base64/hex占比≥95%'] });
+      // v0.3.1（主脑修正 P90）：混淆规则**回到吃原始行** —— D1 把"全部规则"改成吃 code 是**修复面写宽了**：
+      // 「动态加载」剥字符串是对的（注释里的 require 不是真加载），但**混淆的典型形态恰恰是字符串里的大 base64 blob**
+      // ⇒ 剥掉它等于把这一类信号整块删掉（真夹具 src/payload.js:9 行长 2657 的引号内 blob 当场漏报）。
+      if (obfuscationHit(line)) hits.push({ rule: rule.name, severity: rule.severity, message: snippet(line), patterns: ['剥空白后≥2000字符且base64/hex占比≥95%'] });
     } else {
-      const matched = rule.patterns.filter((re) => re.test(line)).map((re) => re.source);
+      // v0.4（T32-D2）：patterns 判 code（v0.3 口径）＋ rawPatterns 判**原始行**（.env 路径字面量——
+      // 引号里的路径正是真信号，剥离会把它删掉；process.env.X 无引号 ⇒ 天然不命中）
+      const matched = [
+        ...rule.patterns.filter((re) => re.test(code)),
+        ...(rule.rawPatterns ?? []).filter((re) => re.test(line)),
+      ].map((re) => re.source);
       if (matched.length > 0) {
         // v0.2（二·B）：「静默终止」按文件角色分级 —— install/cli/test ⇒ info（降级可见：仍列出、
         // 带〔角色=…〕标注、不计入 verdict 计数），lib ⇒ suspicious（现状）。**只对这一条生效**：
@@ -293,7 +348,7 @@ export function scanPluginDir(root, pkg = null) {
       const st = { inBlock: false };                           // v0.2：块注释跨行状态（按文件重置）
       for (let i = 0; i < arr.length; i++) {
         const raw = arr[i].replace(/\r$/, '');
-        const code = codeTextOf(raw, st);                      // 只供「动态加载」；其余规则仍吃原始行
+        const code = codeTextOf(raw, st);                      // v0.3：7 条正则在此文本上匹配（混淆吃原始行）；行号/snippet 取原始行
         for (const h of scanLine(raw, code, role)) {
           findings.push({ ...h, file: rel, line: i + 1 });
         }
@@ -329,6 +384,9 @@ export function buildRecord({ name, version, filename, findings, files, lines, s
   // v0.2：info 命中带〔角色=…〕标注（降级必须可见 —— stdout／--out md／--json 三处都能看到）
   const findingLines = findings.map((f) => `- [${f.rule}] ${f.severity}: ${f.message} (${f.file}:${f.line})${f.role ? `〔角色=${f.role}〕` : ''}${f.extra > 0 ? `（另有 ${f.extra} 处）` : ''}`);
   if (findingLines.length === 0) findingLines.push('- （v0 本地 8 规则 0 命中）');
+  // v0.4（T32-D4）：原始命中数提到标题上 —— 审查者读标题就知道真实工作量（正文是折行后的条数）；
+  // rawHits 与 Review trail 口径行**同一来源**（scanPluginDir 的 rawHits；unit 调用缺省时与旧口径一致用 findings.length）
+  const rawN = rawHits === undefined ? findings.length : rawHits;
 
   return [
     `# VET health record: ${name}@${version}`,
@@ -336,7 +394,7 @@ export function buildRecord({ name, version, filename, findings, files, lines, s
     `- Scanned at: ${scannedAt}`,
     `- Static verdict: ${v.emoji} ${v.verdict} (static score n/a：v0 本地 8 规则口径，非 vet scan_plugin)`,
     '',
-    '## Static findings',
+    `## Static findings（原始命中 ${rawN} 条，折行后 ${findings.length} 条）`,
     ...findingLines,
     '',
     '## Agent investigation',
@@ -354,8 +412,8 @@ export function buildRecord({ name, version, filename, findings, files, lines, s
     `- 生成器：${RECORD_TOOL} —— 静态规则 8 条（${RULE_NAMES}）；severity 定级与 Recommendation 映射见任务包 §七结论矩阵`,
     `- 扫描范围：${pluginRoot} —— ${files} 个文件 / ${lines} 行（跳过 node_modules、.git、二进制与 >2MB 文件共 ${skipped} 项）`,
     `- 生成时间戳：${stamp}（本地时钟）；文件名按协议 Step 5 构造：${filename}`,
-    `- 扫描口径（v0.1）：**只扫代码文件**（${CODE_EXT.join('/')}）；能力面信号按 (规则, 文件) 折行后 ${findings.length} 条（原始命中 ${rawHits === undefined ? findings.length : rawHits} 条）`,
-    `- 角色分级（v0.2）：「静默终止」按文件角色判级 install/cli/test ⇒ info、lib ⇒ suspicious；info 不计入 critical/suspicious 计数；「动态加载」在剥注释/字符串后的代码文本上判定`,
+    `- 扫描口径（v0.1）：**只扫代码文件**（${CODE_EXT.join('/')}）；能力面信号按 (规则, 文件) 折行后 ${findings.length} 条（原始命中 ${rawN} 条）`,
+    `- 角色分级（v0.2）：「静默终止」按文件角色判级 install/cli/test ⇒ info、lib ⇒ suspicious；info 不计入 critical/suspicious 计数；匹配口径（v0.3.1）：**7 条正则规则**在剥注释/字符串后的代码文本上判定（行号/摘录仍取原始行）；「动态加载」同；**「混淆迹象」判原始行**（字符串里的大 blob 正是要抓的形态）；.env 判原始行的引号路径字面量（v0.4）`,
     recOverride === null || recOverride === undefined
       ? `- Recommendation 来源：v0.1 机判切片（critical⇒reject／其余⇒review；**approve 只能由 agent 显式给**）`
       : `- Recommendation 来源：**agent 显式指定 ${recOverride}**（机判默认 ${v.overridden ? recommendFromFindings(findings).recommendation : rec}）`,
@@ -367,15 +425,20 @@ export function buildRecord({ name, version, filename, findings, files, lines, s
 // ---------- 自检守卫（C4）：装配完必须过这一关，不过 ⇒ exit 1 拦下，绝不静默出档 ----------
 // 三类检查：表头首行逐字 ＋ 四个必填段标题各恰好一次 ＋「- Recommendation:」行恰好一次且取值合法。
 // （字段值可能来自被审计包的 package.json —— 恶意/坏字段值污染档结构时，守在这里而不是发出去。）
+// v0.4（T32-D4）：「## Static findings」标题带原始命中数 ⇒ 段位校验**同步**改按新形态核（兄弟引用必须两处同改，
+// P66 的教训）；旧裸标题形态不再被认 ⇒ 若外部仍按旧形态拼档，这里会当场拦下（显式红，不静默放过）。
 export function validateRecord(text, { name, version }) {
   const errors = [];
   const ls = text.split('\n');
   const header = `# VET health record: ${name}@${version}`;
   if (ls[0] !== header) errors.push(`首行表头不符：期望「${header}」，实际「${ls[0]}」`);
-  for (const h of ['## Static findings', '## Agent investigation', '## Quality audit (step 4.5)', '## Review trail (evidence)']) {
+  for (const h of ['## Agent investigation', '## Quality audit (step 4.5)', '## Review trail (evidence)']) {
     const n = ls.filter((l) => l === h).length;
     if (n !== 1) errors.push(`必填段位「${h}」出现 ${n} 次（应恰好 1 次）`);
   }
+  const sfRe = /^## Static findings（原始命中 \d+ 条，折行后 \d+ 条）$/;
+  const sf = ls.filter((l) => sfRe.test(l)).length;
+  if (sf !== 1) errors.push(`必填段位「## Static findings（原始命中 N 条，折行后 N 条）」出现 ${sf} 次（应恰好 1 次）`);
   const recs = ls.filter((l) => /^- Recommendation: /.test(l));
   if (recs.length !== 1) errors.push(`「- Recommendation:」行出现 ${recs.length} 次（应恰好 1 次）`);
   else if (!/^- Recommendation: (approve|review|reject)\s*$/.test(recs[0])) {
@@ -406,8 +469,27 @@ function usage() {
     '  已知边界：正则字面量与除法不区分（可能假红）；跨行模板串续行按代码扫（宁假红不放走真红）；',
     '    被审对象本身是扫描器时仍会自命中（已知且不改）。',
     '',
+    '规则口径（v0.3.1 · 漏报与绕过修复）：',
+    '  「剥注释/字符串」用于 **7 条正则规则**的匹配（v0.2 只有「动态加载」）——注释/字符串里提到 eval(、child_process、token 等',
+    '    不再命中；真代码照报，行号/摘录仍取原始行。',
+    '  ⚠️ 「混淆迹象」**例外：判原始行** —— 字符串里的大 base64/hex blob 正是它要抓的形态，剥掉即漏报。',
+    '  新增词形：子进程 +execFile(／execSync(／spawnSync(；写盘 +rmSync(；出网 +裸 request(（X.request( 形态仍只由 http(s).request 管）。',
+    '  「混淆迹象」改整行有效密度判：剥去全部空白后 ≥2000 字符且 base64/hex 占比 ≥95% ⇒ 插任意个空格不再绕过；',
+    '    正常长行（base64/hex 字母表外字符 ≥5%，如压缩 JS 的标点）不误报。',
+    '',
+    '规则口径（v0.4 · 补漏与收窄）：',
+    '  新增词形：子进程 +fork(；写盘 +copyFile(Sync)?(／rename(Sync)?(／truncate(Sync)?(／createWriteStream；',
+    '    出网 +import-only request —— 判 code 文本的 `import { request } from \'\'` 形态：剥字符串后模块名不可见，',
+    '    任何模块的 request 导入都算（宁假红）；require 解构形态未在本单点名范围，未加。',
+    '  收窄：exec( ⇒ (?<!\\.)\\bexec\\( —— re.exec(line) 这类 RegExp.prototype.exec 不再报子进程',
+    '    （代价：cp.exec( 方法调用形态同被静默，见头部注释②）；',
+    '    .env ⇒ 只认**引号包裹的路径字面量**（该模式判原始行）—— process.env.X 不再报碰凭据；',
+    '    fs.readFileSync(\'.env\')／require(\'./a.env\') 照报。',
+    '  「Static findings」标题带原始命中数（原始命中 N 条，折行后 M 条），与 Review trail 口径行同源同值；',
+    '    段位校验同步按新形态核 —— 旧裸标题形态会被拦（两处必须同步改）。',
+    '',
     '文件名规则（VET-AUDIT_PROTOCOL Step 5）：<去@并用-替/的插件名>-<版本原样>-<yyyyMMdd-HHmmss>.md',
-    '退出码：0 达标 ｜ 1 自检失败（缺必填段位／Recommendation 非法 ⇒ 拦下不产出）｜ 2 用法或参数错',
+    '退出码：0 达标（结论非 reject）｜ 1 自检失败（缺必填段位／Recommendation 非法 ⇒ 拦下不产出）｜ 2 用法或参数错 ｜ 3 审计结论为 reject（机判 critical 或 --recommendation reject；审计档已产出，供门禁 || 拦截）',
   ].join('\n');
 }
 
@@ -536,7 +618,9 @@ function main(opts) {
     console.log('');
     process.stdout.write(record);
   }
-  process.exitCode = 0;
+  // v0.3（T28-D4）：审计结论 reject ⇒ 退出码 3（新档，不与 0/1/2 撞义；档已正常产出，门禁据此 || 拦下）。
+  // 判定用**最终** recommendation（机判或 agent 显式 --recommendation）——显式 approve ⇒ 0（人工通道应放行）。
+  process.exitCode = recFinal === 'reject' ? 3 : 0;
 }
 
 const invokedDirectly = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);

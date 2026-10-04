@@ -56,7 +56,12 @@ node bin/audit-kit.mjs --plugin <插件包目录>
 ```
 
 - 解决什么问题：吃一个插件包目录，产出符合门禁格式的审计档；`--out <目录>` 真写出、`--json` 机器可读、`--stamp <yyyyMMdd-HHmmss>` 固定时间戳。
-- 退出码：`0` 已产出有效审计档（**结论可能是 reject**）｜ `1` 自检失败（**拦下不产出**）｜ `2` 用法或参数错。
+- 退出码：`0` 已产出有效审计档且**结论不是 reject**｜ `1` 自检失败（**拦下不产出**）｜ `2` 用法或参数错｜ `3` **审计结论为 reject**（机判 critical 或 `--recommendation reject`；**审计档已产出**，供门禁 `|| exit 1` 拦住）。
+- **门禁怎么接**（可整行复制）：退出码 `0` ＝ 结论**不是** reject、`3` ＝ 结论**是** reject（两者都表示**工具正常运行**），`1` ＝ 自检失败、`2` ＝ 用法或参数错。**结论以 `recommendation` 为准** —— `node bin/audit-kit.mjs --plugin X || exit 1` 能拦住 reject，但它**分不出**「结论 reject（`3`）」与「自检失败（`1`）／用法错（`2`）」；要**只对 reject 拦**，用下面这行：
+
+  ```bash
+  node bin/audit-kit.mjs --plugin <插件包目录> --json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.exit(JSON.parse(s).recommendation==='reject'?1:0)}catch{process.exit(1)}})" || exit 1
+  ```
 
 ### ④ 一条命令把 27 张卡跑一遍
 
